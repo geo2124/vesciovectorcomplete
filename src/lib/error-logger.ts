@@ -13,6 +13,7 @@ import {
 import { toast } from "sonner";
 import { db as firestore, auth } from "./firebase";
 import { getTenantSlug } from "./utils";
+import { recordDiagnosticAndCaptureSentry, setSentryUserContext } from "./sentry-init";
 
 export const SYSTEM_ADMIN_EMAIL = "geogo3@gmail.com";
 export const ISSUE_EMAIL_SUBJECT = "technical issue for academy software";
@@ -100,6 +101,13 @@ export function setErrorLoggerUserContext(ctx: TelemetryUserContext): void {
     ...activeUserContext,
     ...ctx,
   };
+  setSentryUserContext({
+    userEmail: activeUserContext.userEmail,
+    userName: activeUserContext.userName,
+    userRole: activeUserContext.userRole,
+    branchId: activeUserContext.userBranch,
+    tenantId: activeUserContext.tenantId,
+  });
 }
 
 function getDeviceInfo(): string {
@@ -628,7 +636,7 @@ export async function sendDiagnosticReportToSystemAdmin(options: {
   const reportId =
     options.trigger === "auto_critical_error" && options.specificError?.id
       ? options.specificError.id
-      : `rep_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      : `rep_${Date.now()}_${(crypto.getRandomValues(new Uint32Array(1))[0] / 0x100000000).toString(36).slice(2, 8)}`;
 
   // Layer 1: Configured Academy Email Webhook
   const notifServices = activeUserContext.notificationServices;
@@ -820,7 +828,7 @@ export function logSystemError(input: LogSystemErrorInput): SystemErrorLog | nul
     });
 
     const payloadSummary = summarizeErrorPayload(input.payload, errorMessage);
-    const id = `err_${nowMs}_${Math.random().toString(36).slice(2, 8)}`;
+    const id = `err_${nowMs}_${(crypto.getRandomValues(new Uint32Array(1))[0] / 0x100000000).toString(36).slice(2, 8)}`;
     const route = input.route || resolveCurrentRoute();
 
     const logEntry: SystemErrorLog = {
@@ -851,6 +859,19 @@ export function logSystemError(input: LogSystemErrorInput): SystemErrorLog | nul
       route,
       userNote: `Automatic System Error Intercept (${input.source}: ${input.operation})`,
       maxCount: 1,
+    });
+
+    // Layer 0: Sentry SDK captureException + window.__APP_DIAGNOSTICS__ (last 10 in-memory buffer)
+    recordDiagnosticAndCaptureSentry(input.error, {
+      source: input.source,
+      operation: input.operation,
+      errorCode,
+      payloadSummary,
+      userEmail: ctx.userEmail,
+      userRole: ctx.userRole,
+      branchId: ctx.userBranch,
+      tenantId: ctx.tenantId,
+      route,
     });
 
     // Layer 1: Synchronous Local Ring Buffer
@@ -1009,6 +1030,45 @@ export async function clearErrorLogs(tenantId?: string): Promise<void> {
 export function initGlobalErrorTelemetry(): void {
   if (typeof window === "undefined" || globalTelemetryInitialized) return;
   globalTelemetryInitialized = true;
+
+  const prevOnError = window.onerror;
+  window.onerror = (message, source, lineno, colno, error) => {
+    logSystemError({
+      source: "runtime_error",
+      operation: source
+        ? `window.onerror (${String(source).split("/").pop()}:${lineno || 0}:${colno || 0})`
+        : "window.onerror",
+      error: error || message || "Uncaught runtime error",
+    });
+    if (typeof prevOnError === "function") {
+      return prevOnError(message, source, lineno, colno, error);
+    }
+    return false;
+  };
+
+  const prevOnUnhandledRejection = window.onunhandledrejection;
+  window.onunhandledrejection = function (event: PromiseRejectionEvent) {
+    const reasonStr = String(
+      event.reason instanceof Error ? event.reason.message : event.reason || "",
+    ).toLowerCase();
+    const isFirestoreFailure =
+      reasonStr.includes("permission-denied") ||
+      reasonStr.includes("missing or insufficient permissions") ||
+      reasonStr.includes("invalid-argument") ||
+      reasonStr.includes("unsupported field value") ||
+      reasonStr.includes("transaction");
+
+    logSystemError({
+      source: isFirestoreFailure ? "firestore_write" : "unhandled_promise",
+      operation: isFirestoreFailure
+        ? "window.onunhandledrejection (Firestore)"
+        : "window.onunhandledrejection",
+      error: event.reason || "Unhandled promise rejection",
+    });
+    if (typeof prevOnUnhandledRejection === "function") {
+      return prevOnUnhandledRejection.call(window, event);
+    }
+  };
 
   window.addEventListener("error", (event: ErrorEvent) => {
     logSystemError({

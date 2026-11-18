@@ -179,7 +179,12 @@ export function CoachStatementModal({
     allStatementItems.forEach((item) => {
       if (item.date) years.add(item.date.slice(0, 4));
     });
-    return ["All", ...Array.from(years).sort().reverse()];
+    return [
+      "All",
+      ...Array.from(years)
+        .sort((a, b) => a.localeCompare(b))
+        .reverse(),
+    ];
   }, [allStatementItems]);
 
   // Filtered view according to selected year & type

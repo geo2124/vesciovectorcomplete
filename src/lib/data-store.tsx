@@ -6082,7 +6082,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         targetStage === "lost_churned" ? "Lost Clients / Churned" : "Idle / At-Risk Follow-Up";
 
       const logNote: CrmCommunicationEntry = {
-        id: `comm-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        id: `comm-${Date.now()}-${(crypto.getRandomValues(new Uint32Array(1))[0] / 0x100000000).toString(36).slice(2, 6)}`,
         type: "In-Person",
         note:
           targetStage === "lost_churned"

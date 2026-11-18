@@ -380,7 +380,7 @@ export function pushToWhatsApp(text: string, groupLink?: string, adminPhone?: st
     navigator.clipboard.writeText(text).catch(() => {});
   }
 
-  const trimmedLink = groupLink?.trim() || "";
+  const trimmedLink = (groupLink?.trim() || "").replace(/^http:\/\//i, "https://");
 
   // 2. Open WhatsApp
   if (trimmedLink.startsWith("https://chat.whatsapp.com/")) {
@@ -388,7 +388,7 @@ export function pushToWhatsApp(text: string, groupLink?: string, adminPhone?: st
       description: "Paste it directly into the chat (Ctrl+V / Long-press Paste).",
     });
     window.open(trimmedLink, "_blank", "noopener,noreferrer");
-  } else if (trimmedLink.startsWith("https://wa.me/") || trimmedLink.startsWith("http://wa.me/")) {
+  } else if (trimmedLink.startsWith("https://wa.me/")) {
     toast.success("Opening direct WhatsApp link with pre-filled message...", {
       description: "Formatted text ready to send. Message also saved to clipboard.",
     });

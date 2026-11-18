@@ -731,7 +731,7 @@ function AccountingPage() {
 
   // Get unique months for filter
   const allMonths = Array.from(new Set(baseLedger.map((l) => l.date.slice(0, 7))))
-    .sort()
+    .sort((a, b) => a.localeCompare(b))
     .reverse();
 
   // ---- COACH PAYROLL ACTIONS (FIN-02) ----

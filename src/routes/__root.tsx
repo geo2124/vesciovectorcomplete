@@ -1,3 +1,4 @@
+import { initSentryMonitoring, recordDiagnosticAndCaptureSentry } from "@/lib/sentry-init";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "@/lib/theme";
 import { DataProvider } from "@/lib/data-store";
@@ -14,6 +15,8 @@ import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
+
+initSentryMonitoring();
 
 function NotFoundComponent() {
   return (
@@ -42,6 +45,10 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   const router = useRouter();
   useEffect(() => {
     reportLovableError(error, { boundary: "tanstack_root_error_component" });
+    recordDiagnosticAndCaptureSentry(error, {
+      source: "react_error_boundary",
+      operation: "RootErrorComponent",
+    });
 
     if (typeof window !== "undefined") {
       const msg = String(error?.message || error || "").toLowerCase();
@@ -198,6 +205,7 @@ function RootShell({ children }: { children: ReactNode }) {
 
 import { AuthProvider } from "@/lib/auth";
 import { Toaster } from "@/components/ui/sonner";
+import { DevDiagnosticsPill } from "@/components/dev-diagnostics-pill";
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
@@ -210,6 +218,7 @@ function RootComponent() {
             <AppearanceSync />
             {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
             <Outlet />
+            <DevDiagnosticsPill />
             <Toaster />
           </DataProvider>
         </AuthProvider>

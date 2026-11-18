@@ -4146,7 +4146,12 @@ function Profile({
     coachPayments.forEach((p) => {
       if (p.date) years.add(p.date.slice(0, 4));
     });
-    return ["All", ...Array.from(years).sort().reverse()];
+    return [
+      "All",
+      ...Array.from(years)
+        .sort((a, b) => a.localeCompare(b))
+        .reverse(),
+    ];
   }, [coachPayments]);
 
   const licenseStatus = (() => {
