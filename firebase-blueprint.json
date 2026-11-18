@@ -1,0 +1,455 @@
+{
+  "entities": {
+    "TenantMeta": {
+      "title": "TenantMeta",
+      "description": "Academy meta information",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "slug": { "type": "string" },
+        "contact": { "type": "string" },
+        "phone": { "type": "string" },
+        "sport": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "package": { "type": "string" },
+        "playersLimit": { "type": "number" },
+        "multiBranch": { "type": "boolean" },
+        "features": { "type": "array" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "TenantSettings": {
+      "title": "TenantSettings",
+      "description": "Academy settings, appearance, lists",
+      "type": "object",
+      "properties": {}
+    },
+    "Player": {
+      "title": "Player",
+      "description": "Player record",
+      "type": "object",
+      "properties": {}
+    },
+    "Team": {
+      "title": "Team",
+      "description": "Team record",
+      "type": "object",
+      "properties": {}
+    },
+    "Coach": {
+      "title": "Coach",
+      "description": "Coach record",
+      "type": "object",
+      "properties": {}
+    },
+    "Staff": {
+      "title": "Staff",
+      "description": "Staff record",
+      "type": "object",
+      "properties": {}
+    },
+    "Branch": {
+      "title": "Branch",
+      "description": "Branch record",
+      "type": "object",
+      "properties": {}
+    },
+    "Session": {
+      "title": "Session",
+      "description": "Session record",
+      "type": "object",
+      "properties": {}
+    },
+    "Plan": {
+      "title": "Plan",
+      "description": "Practice plan",
+      "type": "object",
+      "properties": {}
+    },
+    "Attendance": {
+      "title": "Attendance",
+      "description": "Attendance record per session",
+      "type": "object",
+      "properties": {
+        "playerIds": { "type": "array" }
+      }
+    },
+    "StockItem": {
+      "title": "StockItem",
+      "description": "Merchandise stock",
+      "type": "object",
+      "properties": {}
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Merchandise order",
+      "type": "object",
+      "properties": {}
+    },
+    "LedgerEntry": {
+      "title": "LedgerEntry",
+      "description": "Accounting entry",
+      "type": "object",
+      "properties": {}
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "Player tuition and billing invoice",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "playerId": { "type": "string" },
+        "playerName": { "type": "string" },
+        "playerBranch": { "type": "string" },
+        "team": { "type": "string" },
+        "programTier": { "type": "string" },
+        "billingMonth": { "type": "string" },
+        "month": { "type": "string" },
+        "year": { "type": "number" },
+        "amount": { "type": "number" },
+        "status": { "type": "string" },
+        "issuedDate": { "type": "string" },
+        "dueDate": { "type": "string" },
+        "description": { "type": "string" }
+      }
+    },
+    "UserRole": {
+      "title": "UserRole",
+      "description": "User access role",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string" },
+        "branch": { "type": "string" },
+        "active": { "type": "boolean" }
+      }
+    },
+    "PlatformClient": {
+      "title": "PlatformClient",
+      "description": "Super-admin console record",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "slug": { "type": "string" },
+        "status": { "type": "string" }
+      }
+    },
+    "AcademyNotification": {
+      "title": "AcademyNotification",
+      "description": "Role-scoped persistent notification for academy alerts and events",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": {
+          "type": "string",
+          "enum": ["attendance", "billing", "inventory", "curriculum", "system"]
+        },
+        "targetRoles": { "type": "array" },
+        "targetBranchId": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "readBy": { "type": "array" },
+        "actionUrl": { "type": "string" }
+      },
+      "required": [
+        "id",
+        "tenantId",
+        "title",
+        "message",
+        "type",
+        "targetRoles",
+        "createdAt",
+        "readBy"
+      ]
+    },
+    "RoleDefinition": {
+      "title": "RoleDefinition",
+      "description": "Tenant custom or system role with granular operational permissions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "scope": { "type": "string" },
+        "defaultBranchScope": { "type": "string" },
+        "isSystem": { "type": "boolean" },
+        "permissions": { "type": "object" }
+      },
+      "required": ["id", "name", "permissions"]
+    },
+    "MasterDrill": {
+      "title": "MasterDrill",
+      "description": "Drill playbook and coaching exercises",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "duration": { "type": "number" },
+        "durationMinutes": { "type": "number" },
+        "difficulty": { "type": "string" },
+        "intensity": { "type": "string" },
+        "coachingPoints": { "type": "string" },
+        "description": { "type": "string" },
+        "diagramUrl": { "type": "string" },
+        "mediaUrl": { "type": "string" },
+        "drawing": { "type": "string" },
+        "tags": { "type": "array" },
+        "equipment": { "type": "string" },
+        "targetSquad": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "title", "category", "duration", "difficulty", "coachingPoints"]
+    },
+    "WhatsAppGroup": {
+      "title": "WhatsAppGroup",
+      "description": "WhatsApp communication groups for branches, teams, and staff",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "scope": { "type": "string" },
+        "link": { "type": "string" },
+        "branchId": { "type": "string" },
+        "branchName": { "type": "string" },
+        "teamId": { "type": "string" },
+        "teamName": { "type": "string" },
+        "category": { "type": "string" },
+        "adminPhone": { "type": "string" },
+        "contactName": { "type": "string" },
+        "description": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "name", "scope"]
+    },
+    "ResourceFolder": {
+      "title": "ResourceFolder",
+      "description": "Technical director coaching resource folders",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "accessType": { "type": "string" },
+        "accessGroup": { "type": "string" },
+        "accessCoaches": { "type": "array" },
+        "items": { "type": "array" }
+      },
+      "required": ["id", "name", "accessType", "items"]
+    },
+    "Workshop": {
+      "title": "Workshop",
+      "description": "Staff development and coaching workshops",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string" },
+        "title": { "type": "string" },
+        "topic": { "type": "string" },
+        "venue": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "assignedCoaches": { "type": "array" },
+        "assignedLevels": { "type": "array" },
+        "attendance": { "type": "object" },
+        "handoutUrl": { "type": "string" },
+        "handoutName": { "type": "string" }
+      },
+      "required": ["id", "type", "title", "topic", "venue", "date", "time"]
+    },
+    "Supplier": {
+      "title": "Supplier",
+      "description": "Merchandise and equipment suppliers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "contact": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" }
+      },
+      "required": ["id", "name", "contact", "email", "phone"]
+    },
+    "CronLog": {
+      "title": "CronLog",
+      "description": "Server-authoritative billing cron and suspension audit log",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "type": { "type": "string" },
+        "schedule": { "type": "string" },
+        "billingMonth": { "type": "string" },
+        "monthCode": { "type": "string" },
+        "year": { "type": "number" },
+        "generatedCount": { "type": "number" },
+        "skippedCount": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "flaggedSoft": { "type": "number" },
+        "flaggedInactive": { "type": "number" },
+        "unchanged": { "type": "number" },
+        "durationMs": { "type": "number" },
+        "executedAt": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "tenantId", "type", "schedule", "executedAt", "status"]
+    },
+    "CrmLead": {
+      "title": "CrmLead",
+      "description": "Basketball academy CRM pipeline record for leads, trials, idle renewals, churned clients, and retention",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "inquiry",
+            "trial_scheduled",
+            "pending_registration",
+            "active_converted",
+            "idle_followup",
+            "lost_churned",
+            "aftersales_retention"
+          ]
+        },
+        "playerName": { "type": "string" },
+        "gender": { "type": "string" },
+        "dob": { "type": "string" },
+        "category": { "type": "string" },
+        "preferredBranch": { "type": "string" },
+        "preferredPosition": { "type": "string" },
+        "leadSource": { "type": "string" },
+        "parentName": { "type": "string" },
+        "parentPhone": { "type": "string" },
+        "parentEmail": { "type": "string" },
+        "linkedPlayerId": { "type": "string" },
+        "trialSessionId": { "type": "string" },
+        "idleSinceDate": { "type": "string" },
+        "missedSessionsSinceIdle": { "type": "number" },
+        "churnReason": { "type": "string" },
+        "lastTeam": { "type": "string" },
+        "reEngagementNotes": { "type": "string" },
+        "communications": { "type": "array" },
+        "reminders": { "type": "array" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "stage", "playerName", "parentName", "parentPhone", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/tenants/{tenantId}": {
+      "schema": "TenantMeta",
+      "description": "Tenant metadata"
+    },
+    "/tenants/{tenantId}/settings/{docId}": {
+      "schema": "TenantSettings",
+      "description": "Tenant settings"
+    },
+    "/tenants/{tenantId}/players/{playerId}": {
+      "schema": "Player",
+      "description": "Players"
+    },
+    "/tenants/{tenantId}/teams/{teamId}": {
+      "schema": "Team",
+      "description": "Teams"
+    },
+    "/tenants/{tenantId}/coaches/{coachId}": {
+      "schema": "Coach",
+      "description": "Coaches"
+    },
+    "/tenants/{tenantId}/staff/{staffId}": {
+      "schema": "Staff",
+      "description": "Staff"
+    },
+    "/tenants/{tenantId}/branches/{branchId}": {
+      "schema": "Branch",
+      "description": "Branches"
+    },
+    "/tenants/{tenantId}/sessions/{sessionId}": {
+      "schema": "Session",
+      "description": "Sessions"
+    },
+    "/tenants/{tenantId}/plans/{planId}": {
+      "schema": "Plan",
+      "description": "Practice plans"
+    },
+    "/tenants/{tenantId}/attendance/{sessionId}": {
+      "schema": "Attendance",
+      "description": "Attendance tracking"
+    },
+    "/tenants/{tenantId}/drills/{drillId}": {
+      "schema": "MasterDrill",
+      "description": "Drill playbook and coaching exercises"
+    },
+    "/tenants/{tenantId}/stock/{itemId}": {
+      "schema": "StockItem",
+      "description": "Merchandise stock"
+    },
+    "/tenants/{tenantId}/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Merchandise orders"
+    },
+    "/tenants/{tenantId}/suppliers/{supplierId}": {
+      "schema": "Supplier",
+      "description": "Merchandise and equipment suppliers"
+    },
+    "/tenants/{tenantId}/ledger/{entryId}": {
+      "schema": "LedgerEntry",
+      "description": "Ledger entries"
+    },
+    "/tenants/{tenantId}/invoices/{invoiceId}": {
+      "schema": "Invoice",
+      "description": "Tuition and billing invoices"
+    },
+    "/tenants/{tenantId}/notifications/{notificationId}": {
+      "schema": "AcademyNotification",
+      "description": "Role-scoped persistent academy alerts"
+    },
+    "/tenants/{tenantId}/cron_logs/{logId}": {
+      "schema": "CronLog",
+      "description": "Server-authoritative billing cron and suspension audit execution logs"
+    },
+    "/tenants/{tenantId}/users/{uid}": {
+      "schema": "UserRole",
+      "description": "Tenant users and roles"
+    },
+    "/tenants/{tenantId}/customRoles/{roleId}": {
+      "schema": "RoleDefinition",
+      "description": "Tenant custom and system roles with granular permissions"
+    },
+    "/tenants/{tenantId}/groups/{groupId}": {
+      "schema": "WhatsAppGroup",
+      "description": "WhatsApp communication groups"
+    },
+    "/tenants/{tenantId}/resourceFolders/{folderId}": {
+      "schema": "ResourceFolder",
+      "description": "Technical director coaching resource folders"
+    },
+    "/tenants/{tenantId}/workshops/{workshopId}": {
+      "schema": "Workshop",
+      "description": "Staff development and coaching workshops"
+    },
+    "/tenants/{tenantId}/errorLogs/{logId}": {
+      "schema": "CronLog",
+      "description": "Telemetry and diagnostic error logs"
+    },
+    "/tenants/{tenantId}/crmLeads/{leadId}": {
+      "schema": "CrmLead",
+      "description": "Basketball academy CRM pipeline leads and client lifecycle records"
+    },
+    "/users/{uid}": {
+      "schema": "UserRole",
+      "description": "Root user role document for Super Admin and RBAC checks"
+    },
+    "/platformClients/{clientId}": {
+      "schema": "PlatformClient",
+      "description": "Platform clients for super-admin"
+    }
+  }
+}

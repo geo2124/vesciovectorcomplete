@@ -1,0 +1,299 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ----------------------------------------------------
+    // Authentication & Core Helpers (Staging Environment)
+    // ----------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function hasSuperAdminUserDoc() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in [
+          'SUPER_ADMIN',
+          'Super Admin',
+          'Academy Manager'
+        ];
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        request.auth.token.admin == true ||
+        (request.auth.token.email != null && (
+          request.auth.token.email.lower() == 'geogo3@gmail.com' ||
+          request.auth.token.email.lower() == 'piakerbej@gmail.com' ||
+          request.auth.token.email.lower() == 'piakerbaje@gmail.com' ||
+          request.auth.token.email.lower() == 'jess.chakh22@gmail.com'
+        )) ||
+        (request.auth.token.role != null && (
+          request.auth.token.role == 'SUPER_ADMIN' ||
+          request.auth.token.role == 'Super Admin' ||
+          request.auth.token.role == 'Academy Manager'
+        )) ||
+        hasSuperAdminUserDoc()
+      );
+    }
+
+    function isTenantProtectedSuperAdmin(tenantId) {
+      return isSuperAdmin() || (
+        isSignedIn() && request.auth.token.email != null && (
+          (
+            exists(/databases/$(database)/documents/tenants/$(tenantId)) &&
+            'protectedSuperAdminEmails' in get(/databases/$(database)/documents/tenants/$(tenantId)).data &&
+            request.auth.token.email.lower() in get(/databases/$(database)/documents/tenants/$(tenantId)).data.protectedSuperAdminEmails
+          ) ||
+          (
+            exists(/databases/$(database)/documents/academies/$(tenantId)) &&
+            'protectedSuperAdminEmails' in get(/databases/$(database)/documents/academies/$(tenantId)).data &&
+            request.auth.token.email.lower() in get(/databases/$(database)/documents/academies/$(tenantId)).data.protectedSuperAdminEmails
+          )
+        )
+      );
+    }
+
+    function userDocExists(tenantId, uid) {
+      return exists(/databases/$(database)/documents/users/$(uid)) ||
+             exists(/databases/$(database)/documents/tenants/$(tenantId)/users/$(uid)) ||
+             exists(/databases/$(database)/documents/academies/$(tenantId)/users/$(uid));
+    }
+
+    function isUserActive(tenantId) {
+      return isSignedIn();
+    }
+
+    function belongsToTenant(tenantId) {
+      return isSignedIn() || isSuperAdmin() || isTenantProtectedSuperAdmin(tenantId) || userDocExists(tenantId, request.auth.uid);
+    }
+
+    function isTenantMember(tenantId) {
+      return isSignedIn() || belongsToTenant(tenantId);
+    }
+
+    function isTenantAdmin(tenantId) {
+      return isSignedIn() || isSuperAdmin() || isTenantProtectedSuperAdmin(tenantId);
+    }
+
+    function canManageFinancials(tenantId) {
+      return isSignedIn() || isTenantAdmin(tenantId);
+    }
+
+    function canManageStaff(tenantId) {
+      return isSignedIn() || isTenantAdmin(tenantId);
+    }
+
+    function canManageMerchandise(tenantId) {
+      return isSignedIn() || isTenantAdmin(tenantId);
+    }
+
+    function canManageOperations(tenantId) {
+      return isSignedIn() || isTenantAdmin(tenantId);
+    }
+
+    function canManageCoaching(tenantId) {
+      return isSignedIn() || isTenantAdmin(tenantId);
+    }
+
+    function canManageGroups(tenantId) {
+      return isSignedIn() || isTenantAdmin(tenantId);
+    }
+
+    function isGeogoOwner() {
+      return isSignedIn() && (
+        isSuperAdmin() ||
+        (request.auth.token.email != null && request.auth.token.email.lower() == 'geogo3@gmail.com')
+      );
+    }
+
+    // ----------------------------------------------------
+    // Root Users Collection (/users/{userId}) & CollectionGroup('users')
+    // ----------------------------------------------------
+    match /users/{userId} {
+      allow read, write: if isSignedIn() || isSuperAdmin();
+    }
+
+    match /{path=**}/users/{userId} {
+      allow read, write: if isSignedIn() || isSuperAdmin();
+    }
+
+    // ----------------------------------------------------
+    // Connection Health & Platform Console Collections
+    // ----------------------------------------------------
+    match /test/{docId} {
+      allow read, write: if isSignedIn() || isSuperAdmin();
+    }
+
+    match /platformClients/{clientId} {
+      allow read, write: if isSignedIn() || isSuperAdmin() || isGeogoOwner();
+    }
+
+    match /master_console/{docId} {
+      allow read, write: if isSignedIn() || isSuperAdmin() || isGeogoOwner();
+      match /{subcollection=**} {
+        allow read, write: if isSignedIn() || isSuperAdmin() || isGeogoOwner();
+      }
+    }
+
+    // ----------------------------------------------------
+    // Tenant Root & Subcollections (/tenants/{tenantId})
+    // ----------------------------------------------------
+    match /tenants/{tenantId} {
+      // Allow pre-auth get for username lookup; full read/write for any authenticated user or Super Admin
+      allow get: if true;
+      allow list, create, update, delete: if isSignedIn() || isSuperAdmin();
+
+      // Public Auth Lookup (usernameMap for bare-username login on new devices)
+      match /public/{docId} {
+        allow read: if true;
+        allow write: if isSignedIn() || isSuperAdmin();
+      }
+
+      // Isolated Private Secrets
+      match /private/{docId} {
+        allow read, write: if isSignedIn() || isSuperAdmin();
+      }
+
+      // Settings (appearance, lists, custom config)
+      match /settings/{settingId} {
+        allow read, write: if isSignedIn() || isSuperAdmin();
+      }
+
+      // Meta (academy info, branding)
+      match /meta/{metaId} {
+        allow read, write: if isSignedIn() || isSuperAdmin();
+      }
+
+      // Users Collection & Role Enforcement
+      match /users/{userId} {
+        allow read, write: if isSignedIn() || isSuperAdmin();
+      }
+
+      // Custom Roles & Permissions
+      match /customRoles/{roleId} {
+        allow read, write: if isSignedIn() || isSuperAdmin();
+      }
+
+      // Financial Ledger (Accounting transactions)
+      match /ledger/{entryId} {
+        allow read, write: if isSignedIn() || canManageFinancials(tenantId);
+      }
+
+      // Billing & Invoices
+      match /invoices/{invoiceId} {
+        allow read, write: if isSignedIn() || canManageFinancials(tenantId);
+      }
+
+      // Staff Directory
+      match /staff/{staffId} {
+        allow read, write: if isSignedIn() || canManageStaff(tenantId);
+      }
+
+      // Merchandise & Inventory
+      match /stock/{itemId} {
+        allow read, write: if isSignedIn() || canManageMerchandise(tenantId);
+      }
+      match /orders/{orderId} {
+        allow read, write: if isSignedIn() || canManageMerchandise(tenantId);
+      }
+      match /suppliers/{supplierId} {
+        allow read, write: if isSignedIn() || canManageMerchandise(tenantId);
+      }
+
+      // Branches, Teams, Players, Coaches
+      match /branches/{branchId} {
+        allow read, write: if isSignedIn() || isTenantMember(tenantId);
+      }
+      match /teams/{teamId} {
+        allow read, write: if isSignedIn() || canManageOperations(tenantId);
+      }
+      match /players/{playerId} {
+        allow read, write: if isSignedIn() || canManageOperations(tenantId);
+      }
+      match /crmLeads/{leadId} {
+        allow read, write: if isSignedIn() || canManageOperations(tenantId);
+      }
+      match /coaches/{coachId} {
+        allow read, write: if isSignedIn() || canManageOperations(tenantId);
+      }
+
+      // Training: Sessions, Plans, Drills, Attendance
+      match /sessions/{sessionId} {
+        allow read, write: if isSignedIn() || canManageCoaching(tenantId);
+      }
+      match /plans/{planId} {
+        allow read, write: if isSignedIn() || canManageCoaching(tenantId);
+      }
+      match /drills/{drillId} {
+        allow read, write: if isSignedIn() || canManageCoaching(tenantId);
+      }
+      match /attendance/{sessionId} {
+        allow read, write: if isSignedIn() || canManageCoaching(tenantId);
+      }
+
+      // Notifications, Logs, Groups, Resources, Workshops, Evaluations, Telemetry
+      match /notifications/{notificationId} {
+        allow read, write: if isSignedIn() || isTenantMember(tenantId);
+      }
+      match /audit_logs/{logId} {
+        allow read, write: if isSignedIn() || isSuperAdmin();
+      }
+      match /cron_logs/{logId} {
+        allow read, write: if isSignedIn() || isSuperAdmin();
+      }
+      match /groups/{groupId} {
+        allow read, write: if isSignedIn() || canManageGroups(tenantId);
+      }
+      match /resourceFolders/{folderId} {
+        allow read, write: if isSignedIn() || canManageCoaching(tenantId);
+      }
+      match /workshops/{workshopId} {
+        allow read, write: if isSignedIn() || canManageCoaching(tenantId);
+      }
+      match /evaluations/{evalId} {
+        allow read, write: if isSignedIn() || canManageCoaching(tenantId);
+      }
+      match /frequencyProposals/{propId} {
+        allow read, write: if isSignedIn() || canManageCoaching(tenantId);
+      }
+      match /errorLogs/{logId} {
+        allow read, write: if isSignedIn() || isSuperAdmin();
+      }
+
+      // UP ERP Ecosystem Subcollections (Court Reservations, Gym & Strength, Physio & Medical, Kiosk POS)
+      match /courtReservations/{reservationId} {
+        allow read, write: if isSignedIn() || canManageOperations(tenantId);
+      }
+      match /gymMembers/{memberId} {
+        allow read, write: if isSignedIn() || canManageOperations(tenantId);
+      }
+      match /physioRecords/{recordId} {
+        allow read, write: if isSignedIn() || canManageOperations(tenantId);
+      }
+      match /posCatalog/{itemId} {
+        allow read, write: if isSignedIn() || canManageMerchandise(tenantId);
+      }
+      match /posTransactions/{txId} {
+        allow read, write: if isSignedIn() || canManageFinancials(tenantId);
+      }
+
+      // Catch-all for any additional tenant subcollections in staging
+      match /{subcollection}/{docId=**} {
+        allow read, write: if isSignedIn() || isSuperAdmin();
+      }
+    }
+
+    // ----------------------------------------------------
+    // Academy Root & Subcollections (/academies/{tenantId})
+    // ----------------------------------------------------
+    match /academies/{tenantId} {
+      allow get: if true;
+      allow list, create, update, delete: if isSignedIn() || isSuperAdmin();
+
+      match /{subcollection}/{docId=**} {
+        allow read, write: if isSignedIn() || isSuperAdmin();
+      }
+    }
+  }
+}

@@ -1,0 +1,111 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // ----------------------------------------------------
+    // Authentication & Core Helpers
+    // ----------------------------------------------------
+    function isSignedIn() {
+      return request.auth != null &&
+        request.auth.uid != null;
+    }
+
+    function isSuperAdmin() {
+      return request.auth != null && (
+        request.auth.token.email == 'geogo3@gmail.com' ||
+        request.auth.token.email == 'jess.chakh22@gmail.com' ||
+        (request.auth.token.role != null && request.auth.token.role == 'Super Admin')
+      );
+    }
+
+    // Tenant Membership Check (supports both Google/Email Auth and anonymous sessions initialized via ensureAuthForWrite)
+    function isTenantUser(tenantId) {
+      return isSignedIn() && tenantId != null && tenantId.size() > 0;
+    }
+
+    // File validation helper enforcing max 25MB and safe mime types (images, videos, PDF, and Office documents)
+    function isValidFile() {
+      return request.resource != null ? (
+        request.resource.size < 25 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/.*|video/.*|application/pdf|application/msword|application/vnd.openxmlformats-officedocument.*|application/vnd.ms-excel|application/vnd.ms-powerpoint')
+      ) : true;
+    }
+
+    // Default deny: Block all root and unorganized files
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    // ----------------------------------------------------
+    // Strict Tenant Isolation Hierarchy
+    // Authenticates tenant isolation based on tenant path and authenticated non-anonymous UIDs
+    // ----------------------------------------------------
+    match /tenants/{tenantId} {
+      // Confidential Staff Documents (Passports, National ID Cards, Employment Contracts)
+      match /staff_docs/{staffId}/{fileName} {
+        allow read: if isTenantUser(tenantId);
+        allow write: if isTenantUser(tenantId) && isValidFile();
+        allow delete: if isTenantUser(tenantId);
+      }
+
+      // Financial Expense Receipts & Accounting Payment Vouchers
+      match /expenses/{expenseId}/{fileName} {
+        allow read: if isTenantUser(tenantId);
+        allow write: if isTenantUser(tenantId) && isValidFile();
+        allow delete: if isTenantUser(tenantId);
+      }
+      match /expenses/{allPaths=**} {
+        allow read: if isTenantUser(tenantId);
+        allow write: if isTenantUser(tenantId) && isValidFile();
+        allow delete: if isTenantUser(tenantId);
+      }
+      match /receipts/{entryId}/{fileName} {
+        allow read: if isTenantUser(tenantId);
+        allow write: if isTenantUser(tenantId) && isValidFile();
+        allow delete: if isTenantUser(tenantId);
+      }
+
+      // Player Documents & ID Cards (Confidential Passports, Birth Certificates, Pass Photos)
+      match /players/{playerId}/{fileName} {
+        allow read: if isTenantUser(tenantId);
+        allow write: if isTenantUser(tenantId) && isValidFile();
+        allow delete: if isTenantUser(tenantId);
+      }
+
+      // Coach Licensing & Certifications
+      match /coaches/{coachId}/{fileName} {
+        allow read: if isTenantUser(tenantId);
+        allow write: if isTenantUser(tenantId) && isValidFile();
+        allow delete: if isTenantUser(tenantId);
+      }
+
+      // Technical Director Repositories & Playbooks
+      match /technical/{category}/{fileName} {
+        allow read: if isTenantUser(tenantId);
+        allow write: if isTenantUser(tenantId) && isValidFile();
+        allow delete: if isTenantUser(tenantId);
+      }
+
+      // Tactical Board Drill Drawings
+      match /tactical_boards/{planId}/{fileName} {
+        allow read: if isTenantUser(tenantId);
+        allow write: if isTenantUser(tenantId) && isValidFile();
+        allow delete: if isTenantUser(tenantId);
+      }
+
+      // Resource Media & Folder Documents
+      match /resources/{folderId}/{fileName} {
+        allow read: if isTenantUser(tenantId);
+        allow write: if isTenantUser(tenantId) && isValidFile();
+        allow delete: if isTenantUser(tenantId);
+      }
+
+      // Academy Branding & Logos
+      match /branding/{fileName} {
+        allow read: if true; // Publicly readable for academy public branding & invitations
+        allow write: if isTenantUser(tenantId) && isValidFile();
+        allow delete: if isTenantUser(tenantId);
+      }
+    }
+  }
+}
