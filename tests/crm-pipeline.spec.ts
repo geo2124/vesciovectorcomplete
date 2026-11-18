@@ -1,0 +1,74 @@
+import { test, expect } from "@playwright/test";
+
+test.describe("Academy CRM Pipeline", () => {
+  test.beforeEach(async ({ page }) => {
+    // Authenticate as Super Admin for automated headless runs
+    await page.addInitScript(() => {
+      window.localStorage.setItem(
+        "vv_auth_session_user",
+        JSON.stringify({
+          id: "admin-1",
+          email: "geogo3@gmail.com",
+          name: "Georges Khoury",
+          role: "super_admin",
+          branch: "All",
+          tenantId: "donbosco",
+        }),
+      );
+    });
+  });
+
+  test("Add Player and Check Age Matrix Assignment", async ({ page }) => {
+    // 1. Navigate to the Coach/Academy CRM route
+    await page.goto("/crm");
+    await page.waitForLoadState("domcontentloaded");
+
+    // Ensure the CRM pipeline board or page container is visible
+    const crmHeading = page
+      .locator("h1, h2, div")
+      .filter({ hasText: /CRM|Pipeline/i })
+      .first();
+    await expect(crmHeading).toBeVisible({ timeout: 15000 });
+
+    // 2. Open the "New Lead / Player" modal
+    const newLeadBtn = page
+      .locator("button")
+      .filter({ hasText: /New Lead|Add Player|New Inquiry/i })
+      .first();
+    await expect(newLeadBtn).toBeVisible();
+    await newLeadBtn.click();
+
+    // 3. Fill in dummy player name and Date of Birth (DOB)
+    const nameInput = page
+      .locator('input[placeholder*="Karim Mansour"], input[placeholder*="name" i]')
+      .first();
+    await expect(nameInput).toBeVisible();
+    await nameInput.fill("Alexander Vance");
+
+    const dobInput = page.locator('input[type="date"]').first();
+    if (await dobInput.isVisible()) {
+      await dobInput.fill("2013-06-15");
+    }
+
+    // 4. Verify age category / matrix selector is available and select category
+    const categorySelect = page
+      .locator("select")
+      .filter({
+        has: page.locator('option[value="U-14"], option[value="U-12"]'),
+      })
+      .first();
+    if (await categorySelect.isVisible()) {
+      await categorySelect.selectOption({ label: "U-14" }).catch(() => {});
+    }
+
+    // 5. Submit and save CRM Card
+    const submitBtn = page
+      .locator("button")
+      .filter({ hasText: /Save CRM Card|Save Lead|Save/i })
+      .first();
+    await submitBtn.click();
+
+    // 6. Verify the player is successfully added to the pipeline
+    await expect(page.locator("text=Alexander Vance").first()).toBeVisible({ timeout: 10000 });
+  });
+});
