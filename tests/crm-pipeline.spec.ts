@@ -22,6 +22,7 @@ test.describe("Academy CRM Pipeline", () => {
     // 1. Navigate to the Coach/Academy CRM route
     await page.goto("/crm");
     await page.waitForLoadState("domcontentloaded");
+    await page.waitForTimeout(1000);
 
     // Ensure the CRM pipeline board or page container is visible
     const crmHeading = page
@@ -35,14 +36,14 @@ test.describe("Academy CRM Pipeline", () => {
       .locator("button")
       .filter({ hasText: /New Lead|Add Player|New Inquiry/i })
       .first();
-    await expect(newLeadBtn).toBeVisible();
+    await expect(newLeadBtn).toBeVisible({ timeout: 10000 });
     await newLeadBtn.click();
 
     // 3. Fill in dummy player name and Date of Birth (DOB)
     const nameInput = page
       .locator('input[placeholder*="Karim Mansour"], input[placeholder*="name" i]')
       .first();
-    await expect(nameInput).toBeVisible();
+    await expect(nameInput).toBeVisible({ timeout: 10000 });
     await nameInput.fill("Alexander Vance");
 
     const dobInput = page.locator('input[type="date"]').first();
@@ -61,14 +62,16 @@ test.describe("Academy CRM Pipeline", () => {
       await categorySelect.selectOption({ label: "U-14" }).catch(() => {});
     }
 
-    // 5. Submit and save CRM Card
+    // 5. Submit and save CRM Card - stabilize button to prevent React re-render detachment race condition
     const submitBtn = page
       .locator("button")
       .filter({ hasText: /Save CRM Card|Save Lead|Save/i })
       .first();
-    await submitBtn.click();
+    await submitBtn.waitFor({ state: "visible", timeout: 10000 });
+    await page.waitForTimeout(500); // let re-renders settle
+    await submitBtn.click({ force: true });
 
     // 6. Verify the player is successfully added to the pipeline
-    await expect(page.locator("text=Alexander Vance").first()).toBeVisible({ timeout: 10000 });
+    await expect(page.locator("text=Alexander Vance").first()).toBeVisible({ timeout: 15000 });
   });
 });

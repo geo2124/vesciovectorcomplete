@@ -31,8 +31,29 @@ import {
   Copy,
   Send,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Kanban,
+  Pin,
+  PinOff,
+  LayoutDashboard,
+  Calendar,
+  Clock,
+  ShoppingBag,
+  Users,
+  UserCheck,
+  Shield,
+  Briefcase,
+  Building2,
+  Wallet,
+  Settings,
+  Compass,
+  ClipboardList,
+  BookOpen,
+  Sliders,
 } from "lucide-react";
 import { Modal, Field, Input, Textarea, Button } from "@/components/kit";
+import { VescioNexusIcon } from "@/components/vescio-nexus-icon";
 import { toast } from "sonner";
 
 const isMasterOwner = (email?: string | null) =>
@@ -63,7 +84,6 @@ const baseGroups: { title: string; items: NavItem[] }[] = [
     title: "Roster",
     items: [
       { to: "/players", label: "Players" },
-      { to: "/crm", label: "CRM & Pipeline", meta: "CRM" },
       { to: "/coaches", label: "Coaches" },
       { to: "/teams", label: "Teams" },
       { to: "/personnel", label: "Personnel" },
@@ -78,7 +98,6 @@ const baseGroups: { title: string; items: NavItem[] }[] = [
       { to: "/settings", label: "System Settings" },
       { to: "/technical", label: "Technical Portal", meta: "VIEW" },
       { to: "/coach", label: "Coach Portal", meta: "VIEW" },
-      { to: "/up-erp", label: "UP ERP Ecosystem", meta: "HUB" },
     ],
   },
 ];
@@ -106,6 +125,52 @@ const isNavActive = (itemTo: string, currentPath: string) => {
   return currentPath === itemTo || currentPath.startsWith(itemTo + "/");
 };
 
+const SIDEBAR_PINNED_STORAGE_KEY = "vv-sidebar-pinned";
+
+const NEXUS_LINK_SURFACE_CLS =
+  "bg-teal-600/15 text-teal-950 ring-1 ring-teal-600/45 hover:bg-teal-600/25 dark:bg-emerald-500/15 dark:text-emerald-300 dark:ring-emerald-500/40 dark:hover:bg-emerald-500/25";
+
+function getSidebarNavIcon(to: string) {
+  switch (to) {
+    case "/":
+      return LayoutDashboard;
+    case "/calendar":
+      return Calendar;
+    case "/sessions":
+      return Clock;
+    case "/merchandise":
+      return ShoppingBag;
+    case "/players":
+      return Users;
+    case "/coaches":
+      return UserCheck;
+    case "/teams":
+      return Shield;
+    case "/personnel":
+      return Briefcase;
+    case "/branches":
+      return Building2;
+    case "/accounting":
+      return Wallet;
+    case "/users":
+      return KeyRound;
+    case "/settings":
+      return Settings;
+    case "/technical":
+      return Compass;
+    case "/coach":
+      return ClipboardList;
+    case "/admin":
+      return ShieldCheck;
+    case "/setup":
+      return Sliders;
+    case "/documentation":
+      return BookOpen;
+    default:
+      return LayoutDashboard;
+  }
+}
+
 let hasClientMounted = false;
 
 const subscribeAcademySlice = (cb: () => void) => dbStore.subscribe("academy", cb);
@@ -118,12 +183,12 @@ const subscribePlayersCountSlice = (cb: () => void) => dbStore.subscribe("player
 const getPlayersCountSlice = () => dbStore.getSlice("players")?.length ?? 0;
 
 export function AppShell({
-  crumb,
+  crumb: _crumb,
   title,
   action,
   children,
 }: {
-  crumb: string;
+  crumb?: string;
   title: string;
   action?: ReactNode;
   children: ReactNode;
@@ -144,10 +209,41 @@ export function AppShell({
   const isAuthenticatedSession = Boolean(passwordUser || (user && !user.isAnonymous));
 
   const [mounted, setMounted] = useState(() => hasClientMounted);
+  const [sidebarPinned, setSidebarPinned] = useState(false);
+  const [sidebarHovered, setSidebarHovered] = useState(false);
+  const [workspaceCollapsed, setWorkspaceCollapsed] = useState(false);
+  const [packageCollapsed, setPackageCollapsed] = useState(false);
   useEffect(() => {
     hasClientMounted = true;
     setMounted(true);
+    try {
+      const storedPinned = window.localStorage.getItem(SIDEBAR_PINNED_STORAGE_KEY);
+      if (storedPinned === "true") {
+        setSidebarPinned(true);
+      } else if (storedPinned === "false") {
+        setSidebarPinned(false);
+      }
+    } catch {
+      // ignore localStorage access errors
+    }
   }, []);
+
+  const handleToggleSidebarPin = () => {
+    setSidebarPinned((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem(SIDEBAR_PINNED_STORAGE_KEY, String(next));
+      } catch {
+        // ignore localStorage access errors
+      }
+      if (!next) {
+        setSidebarHovered(false);
+      }
+      return next;
+    });
+  };
+
+  const isSidebarExpanded = sidebarPinned || sidebarHovered;
 
   const liveAcademy = useSyncExternalStore(subscribeAcademySlice, getAcademySlice, getAcademySlice);
 
@@ -866,200 +962,439 @@ export function AppShell({
   }
 
   return (
-    <div className="mx-auto grid min-h-screen max-w-[1560px] lg:grid-cols-[248px_1fr]">
-      <aside className="sticky top-0 hidden h-screen flex-col border-r border-ink-800 bg-ink-950 lg:flex">
-        <div className="flex h-16 items-center gap-3 border-b border-ink-800 px-5">
-          <img
-            src={currentLogo}
-            alt={currentAcademy?.name || "Vescio Vector"}
-            className="h-9 w-9 shrink-0 object-contain"
-            onError={(e) => {
-              if (
-                typeof window !== "undefined" &&
-                e.currentTarget.src !== window.location.origin + "/vescio-vector-logo.png"
-              ) {
-                e.currentTarget.src = "/vescio-vector-logo.png";
-              }
-            }}
-          />
-          <div className="min-w-0 flex-1 leading-none">
-            <div className="flex items-center gap-2">
-              <span className="font-display text-[15px] tracking-tight text-ink-100">VESCIO</span>
-              <span
-                className="inline-flex shrink-0 items-center rounded-full bg-amber-400 px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-ink-950 shadow-sm ring-1 ring-amber-300"
-                title="Staging Environment"
-              >
-                STAGING
-              </span>
-            </div>
-            <div className="mt-1 font-mono text-[9px] tracking-[0.3em] text-court-400">VECTOR</div>
-          </div>
-        </div>
-
-        <div className="px-4 pt-5">
-          <div className="label-mono px-2 pb-2">Workspace</div>
-          <div className="flex items-center gap-3 rounded-md bg-ink-850 px-2 py-2 ring-1 ring-ink-700">
-            <div className="grid h-8 w-8 place-items-center bg-court-500/15 overflow-hidden rounded">
-              {currentAcademy?.logo ? (
+    <div
+      className={`mx-auto grid min-h-screen max-w-[1560px] ${
+        sidebarPinned ? "lg:grid-cols-[248px_1fr]" : "lg:grid-cols-[64px_1fr]"
+      }`}
+    >
+      <div className="relative sticky top-0 z-30 hidden h-screen lg:block">
+        <aside
+          onMouseEnter={() => setSidebarHovered(true)}
+          onMouseLeave={() => setSidebarHovered(false)}
+          className={`flex h-screen flex-col overflow-x-hidden border-r border-ink-800 bg-ink-950 transition-[width,box-shadow] duration-200 ease-out ${
+            sidebarPinned
+              ? "w-[248px]"
+              : isSidebarExpanded
+                ? "absolute inset-y-0 left-0 w-[248px] shadow-2xl shadow-black/20 dark:shadow-black/60"
+                : "w-16"
+          }`}
+        >
+          {isSidebarExpanded ? (
+            <>
+              <div className="flex h-16 shrink-0 items-center gap-2.5 border-b border-ink-800 px-4">
                 <img
-                  src={currentAcademy.logo}
-                  alt=""
-                  className="h-6 w-6 object-contain"
+                  src={currentLogo}
+                  alt={currentAcademy?.name || "Vescio Vector"}
+                  className="h-9 w-9 shrink-0 object-contain"
                   onError={(e) => {
-                    e.currentTarget.style.display = "none";
+                    if (
+                      typeof window !== "undefined" &&
+                      e.currentTarget.src !== window.location.origin + "/vescio-vector-logo.png"
+                    ) {
+                      e.currentTarget.src = "/vescio-vector-logo.png";
+                    }
                   }}
                 />
-              ) : (
-                <span className="font-mono text-xs text-court-400">{initials}</span>
-              )}
-            </div>
-            <div className="leading-tight min-w-0 flex-1">
-              <div className="truncate text-sm font-medium text-ink-100">{currentAcademy.name}</div>
-              <div className="truncate font-mono text-[10px] text-ink-400">
-                {currentAcademy.url}
-              </div>
-            </div>
-          </div>
-
-          <Link
-            to="/up-erp"
-            preload="intent"
-            className="mt-3 flex items-center justify-between rounded-md bg-emerald-500/15 px-3 py-2 text-emerald-300 ring-1 ring-emerald-500/40 transition-all hover:bg-emerald-500/25"
-          >
-            <div className="leading-tight">
-              <div className="font-mono text-[11px] font-bold uppercase tracking-wider text-emerald-300">
-                UP ERP Ecosystem
-              </div>
-              <div className="font-mono text-[9px] text-emerald-400/80">
-                Courts · Gym · Physio · POS
-              </div>
-            </div>
-            <span className="rounded bg-emerald-400 px-1.5 py-0.5 font-mono text-[9px] font-bold text-ink-950">
-              HUB →
-            </span>
-          </Link>
-        </div>
-
-        <nav className="flex-1 space-y-6 overflow-y-auto px-4 pt-5">
-          {visibleGroups.map((g) => (
-            <div key={g.title}>
-              <div className="label-mono px-2 pb-1.5">{g.title}</div>
-              <div className="space-y-0.5">
-                {g.items.map((item) => {
-                  const active = isNavActive(item.to, pathname);
-                  return (
-                    <Link
-                      key={item.to}
-                      to={item.to}
-                      preload="intent"
-                      className={`flex items-center justify-between rounded-md px-2 py-2 ${
-                        active
-                          ? "bg-court-500/12 text-ink-100 ring-1 ring-court-500/30"
-                          : "text-ink-200 hover:bg-ink-850 hover:text-ink-100 transition-colors"
-                      }`}
+                <div className="min-w-0 flex-1 leading-none">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-display text-[15px] tracking-tight text-ink-100">
+                      VESCIO
+                    </span>
+                    <span
+                      className="inline-flex shrink-0 items-center rounded-full bg-amber-400 px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wider text-ink-950 shadow-sm ring-1 ring-amber-300"
+                      title="Staging Environment"
                     >
-                      <span className={`text-sm ${active ? "font-medium" : ""}`}>{item.label}</span>
-                      {item.meta ? (
-                        <span
-                          className={`font-mono text-[10px] ${
-                            active ? "text-court-400" : "text-ink-400"
-                          }`}
-                        >
-                          {item.meta}
-                        </span>
-                      ) : null}
-                    </Link>
-                  );
-                })}
+                      STAGING
+                    </span>
+                  </div>
+                  <div className="mt-1 font-mono text-[9px] tracking-[0.3em] text-court-400">
+                    VECTOR
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleToggleSidebarPin}
+                  aria-pressed={sidebarPinned}
+                  aria-label={
+                    sidebarPinned ? "Unlock sidebar to auto-collapse" : "Lock and pin sidebar open"
+                  }
+                  title={
+                    sidebarPinned
+                      ? "Sidebar pinned open — click to unlock (auto-collapse)"
+                      : "Sidebar auto-collapses — click to pin/lock open"
+                  }
+                  className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors ${
+                    sidebarPinned
+                      ? "bg-court-500/15 text-court-400 ring-1 ring-court-500/40 hover:bg-court-500/25"
+                      : "text-ink-400 ring-1 ring-transparent hover:bg-ink-850 hover:text-ink-100 hover:ring-ink-700"
+                  }`}
+                >
+                  {sidebarPinned ? (
+                    <Pin className="h-3.5 w-3.5" />
+                  ) : (
+                    <PinOff className="h-3.5 w-3.5" />
+                  )}
+                </button>
               </div>
-            </div>
-          ))}
-        </nav>
 
-        <div className="border-t border-ink-800 p-4">
-          <div className="label-mono mb-1.5">Package</div>
-          <div className="mb-2 flex items-baseline justify-between">
-            <span className="text-xs text-ink-200">Players used</span>
-            <span className="font-mono text-xs text-ink-100">
-              {playersUsedCount}
-              <span className="text-ink-400">/{playersLimit}</span>
-            </span>
-          </div>
-          <div className="h-1 overflow-hidden rounded-full bg-ink-800">
-            <div
-              className="h-full bg-court-500"
-              style={{ width: `${Math.min(100, (playersUsedCount / playersLimit) * 100)}%` }}
-            />
-          </div>
-          <div className="mt-3 text-[11px] text-ink-400">
-            Plan · <span className="text-ink-200">{currentAcademy.plan}</span> · renews{" "}
-            {currentAcademy.renews}
-          </div>
-          <div className="mt-3 space-y-1.5">
-            <button
-              type="button"
-              onClick={() => {
-                setIssueReportedConfirm(false);
-                setReportIssueOpen(true);
-              }}
-              className="flex w-full items-center justify-center gap-1.5 rounded border border-ink-800 bg-ink-900/70 px-2.5 py-1.5 font-mono text-[10px] text-ink-300 transition-colors hover:border-court-500/40 hover:text-court-300"
-              title="Report a technical issue to the system administrator"
-            >
-              <ShieldAlert className="h-3 w-3 text-court-400" />
-              <span>Report Issue</span>
-            </button>
-            {isMasterOwner(authUser?.email) && (
-              <button
-                type="button"
-                onClick={() => void copyDiagnosticReportToClipboard()}
-                className="flex w-full items-center justify-center gap-1.5 rounded border border-court-500/30 bg-court-500/10 px-2.5 py-1.5 font-mono text-[10px] text-court-300 transition-colors hover:bg-court-500/20"
-                title="Copy ready-to-paste AI Studio prompt block (Master Owner Only)"
-              >
-                <Copy className="h-3 w-3 text-court-400" />
-                <span>Copy AI Prompt Block</span>
-              </button>
-            )}
-          </div>
-        </div>
-      </aside>
+              <div className="px-4 pt-5">
+                <button
+                  type="button"
+                  onClick={() => setWorkspaceCollapsed((prev) => !prev)}
+                  aria-expanded={!workspaceCollapsed}
+                  aria-controls="sidebar-workspace-card"
+                  title={
+                    workspaceCollapsed ? "Expand workspace details" : "Collapse workspace details"
+                  }
+                  className="flex w-full items-center justify-between gap-2 px-2 pb-2 text-left transition-colors hover:text-ink-100"
+                >
+                  <span className="label-mono">Workspace</span>
+                  <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-ink-400 transition-colors hover:bg-ink-850 hover:text-ink-100">
+                    {workspaceCollapsed ? (
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronUp className="h-3.5 w-3.5" />
+                    )}
+                  </span>
+                </button>
+
+                <div
+                  id="sidebar-workspace-card"
+                  className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${
+                    workspaceCollapsed ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100"
+                  }`}
+                >
+                  <div className="overflow-hidden">
+                    <div className="p-px pb-3">
+                      <div className="flex items-center gap-3 rounded-md bg-ink-850 px-2 py-2 ring-1 ring-ink-700">
+                        <div className="grid h-8 w-8 place-items-center overflow-hidden rounded bg-court-500/15">
+                          {currentAcademy?.logo ? (
+                            <img
+                              src={currentAcademy.logo}
+                              alt=""
+                              className="h-6 w-6 object-contain"
+                              onError={(e) => {
+                                e.currentTarget.style.display = "none";
+                              }}
+                            />
+                          ) : (
+                            <span className="font-mono text-xs text-court-400">{initials}</span>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1 leading-tight">
+                          <div className="truncate text-sm font-medium text-ink-100">
+                            {currentAcademy.name}
+                          </div>
+                          <div className="truncate font-mono text-[10px] text-ink-400">
+                            {currentAcademy.url}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {workspaceCollapsed ? (
+                  <div
+                    className={`grid gap-1.5 ${
+                      hasModuleReadPermission("/crm") ? "grid-cols-2" : "grid-cols-1"
+                    }`}
+                  >
+                    <Link
+                      to="/up-erp"
+                      preload="intent"
+                      className={`flex h-8 items-center justify-center whitespace-nowrap rounded-md px-2 font-mono text-[11px] font-bold tracking-wide transition-all ${NEXUS_LINK_SURFACE_CLS}`}
+                      title="Vescio Nexus ERP"
+                    >
+                      Nexus ERP
+                    </Link>
+                    {hasModuleReadPermission("/crm") && (
+                      <Link
+                        to="/crm"
+                        preload="intent"
+                        className={`flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2 font-mono text-[11px] font-bold tracking-wide ring-1 transition-all ${
+                          isNavActive("/crm", pathname)
+                            ? "bg-court-500/20 text-court-400 ring-court-500/50 dark:text-court-300"
+                            : "bg-ink-850/90 text-court-400 ring-court-500/30 hover:bg-court-500/15 hover:ring-court-500/45 dark:text-court-300"
+                        }`}
+                        title="CRM & Pipeline"
+                      >
+                        <Kanban className="h-3.5 w-3.5 shrink-0 text-court-400" />
+                        <span>CRM</span>
+                      </Link>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <Link
+                      to="/up-erp"
+                      preload="intent"
+                      className={`flex items-center justify-between gap-2 rounded-md px-3 py-2 transition-all ${NEXUS_LINK_SURFACE_CLS}`}
+                    >
+                      <div className="min-w-0 leading-tight">
+                        <div className="font-mono text-[11px] font-bold uppercase tracking-wider text-teal-950 dark:text-emerald-300">
+                          Vescio Nexus
+                        </div>
+                        <div className="font-mono text-[9px] text-teal-800 dark:text-emerald-400/80">
+                          Courts · Gym · Physio · POS
+                        </div>
+                      </div>
+                      <VescioNexusIcon className="h-5 w-8 shrink-0" />
+                    </Link>
+
+                    {hasModuleReadPermission("/crm") && (
+                      <Link
+                        to="/crm"
+                        preload="intent"
+                        className={`mt-2 flex items-center justify-between gap-2 rounded-md px-3 py-2 ring-1 transition-all ${
+                          isNavActive("/crm", pathname)
+                            ? "bg-court-500/20 text-court-400 ring-court-500/50 dark:text-court-300"
+                            : "bg-ink-850/90 text-court-400 ring-court-500/30 hover:bg-court-500/15 hover:ring-court-500/45 dark:text-court-300"
+                        }`}
+                      >
+                        <div className="min-w-0 leading-tight">
+                          <div className="font-mono text-[11px] font-bold uppercase tracking-wider text-court-400 dark:text-court-300">
+                            CRM &amp; Pipeline
+                          </div>
+                          <div className="font-mono text-[9px] text-ink-400">
+                            Leads · Trials · Renewals
+                          </div>
+                        </div>
+                        <Kanban className="h-4 w-4 shrink-0 text-court-400" />
+                      </Link>
+                    )}
+                  </>
+                )}
+              </div>
+
+              <nav className="flex-1 space-y-6 overflow-y-auto px-4 pt-5">
+                {visibleGroups.map((g) => (
+                  <div key={g.title}>
+                    <div className="label-mono px-2 pb-1.5">{g.title}</div>
+                    <div className="space-y-0.5">
+                      {g.items.map((item) => {
+                        const active = isNavActive(item.to, pathname);
+                        return (
+                          <Link
+                            key={item.to}
+                            to={item.to}
+                            preload="intent"
+                            className={`flex items-center justify-between rounded-md px-2 py-2 ${
+                              active
+                                ? "bg-court-500/12 text-ink-100 ring-1 ring-court-500/30"
+                                : "text-ink-200 transition-colors hover:bg-ink-850 hover:text-ink-100"
+                            }`}
+                          >
+                            <span className={`text-sm ${active ? "font-medium" : ""}`}>
+                              {item.label}
+                            </span>
+                            {item.meta ? (
+                              <span
+                                className={`font-mono text-[10px] ${
+                                  active ? "text-court-400" : "text-ink-400"
+                                }`}
+                              >
+                                {item.meta}
+                              </span>
+                            ) : null}
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </nav>
+
+              <div className="border-t border-ink-800 px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => setPackageCollapsed((prev) => !prev)}
+                  aria-expanded={!packageCollapsed}
+                  aria-controls="sidebar-package-details"
+                  title={packageCollapsed ? "Expand package details" : "Collapse package details"}
+                  className="flex w-full items-center justify-between gap-2 text-left transition-colors hover:text-ink-100"
+                >
+                  {packageCollapsed ? (
+                    <span className="truncate text-[11px] text-ink-400">
+                      Plan · <span className="text-ink-200">{currentAcademy.plan}</span> · renews{" "}
+                      {currentAcademy.renews}
+                    </span>
+                  ) : (
+                    <span className="label-mono">Package</span>
+                  )}
+                  <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-ink-400 transition-colors hover:bg-ink-850 hover:text-ink-100">
+                    {packageCollapsed ? (
+                      <ChevronUp className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    )}
+                  </span>
+                </button>
+
+                <div
+                  id="sidebar-package-details"
+                  className={`grid transition-[grid-template-rows,opacity] duration-200 ease-out ${
+                    packageCollapsed ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100"
+                  }`}
+                >
+                  <div className="overflow-hidden">
+                    <div className="pt-2.5">
+                      <div className="mb-2 flex items-baseline justify-between">
+                        <span className="text-xs text-ink-200">Players used</span>
+                        <span className="font-mono text-xs tabular-nums text-ink-100">
+                          {playersUsedCount}
+                          <span className="text-ink-400">/{playersLimit}</span>
+                        </span>
+                      </div>
+                      <div className="h-1 overflow-hidden rounded-full bg-ink-800">
+                        <div
+                          className="h-full bg-court-500"
+                          style={{
+                            width: `${Math.min(100, (playersUsedCount / playersLimit) * 100)}%`,
+                          }}
+                        />
+                      </div>
+                      <div className="mt-3 text-[11px] text-ink-400">
+                        Plan · <span className="text-ink-200">{currentAcademy.plan}</span> · renews{" "}
+                        {currentAcademy.renews}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            /* Slim 64px Icon-Only Rail when Unlocked & Not Hovered */
+            <>
+              <div className="flex h-16 shrink-0 items-center justify-center border-b border-ink-800">
+                <img
+                  src={currentLogo}
+                  alt={currentAcademy?.name || "Vescio Vector"}
+                  className="h-8 w-8 object-contain"
+                  onError={(e) => {
+                    if (
+                      typeof window !== "undefined" &&
+                      e.currentTarget.src !== window.location.origin + "/vescio-vector-logo.png"
+                    ) {
+                      e.currentTarget.src = "/vescio-vector-logo.png";
+                    }
+                  }}
+                />
+              </div>
+
+              <div className="flex flex-col items-center gap-2 border-b border-ink-800 py-3">
+                <div
+                  className="grid h-9 w-9 place-items-center overflow-hidden rounded-md bg-ink-850 ring-1 ring-ink-700"
+                  title={`${currentAcademy.name} (${currentAcademy.url})`}
+                >
+                  {currentAcademy?.logo ? (
+                    <img
+                      src={currentAcademy.logo}
+                      alt=""
+                      className="h-6 w-6 object-contain"
+                      onError={(e) => {
+                        e.currentTarget.style.display = "none";
+                      }}
+                    />
+                  ) : (
+                    <span className="font-mono text-xs text-court-400">{initials}</span>
+                  )}
+                </div>
+
+                <Link
+                  to="/up-erp"
+                  preload="intent"
+                  title="Vescio Nexus"
+                  className={`grid h-9 w-9 place-items-center rounded-md transition-all ${NEXUS_LINK_SURFACE_CLS}`}
+                >
+                  <VescioNexusIcon className="h-3.5 w-6" />
+                </Link>
+
+                {hasModuleReadPermission("/crm") && (
+                  <Link
+                    to="/crm"
+                    preload="intent"
+                    title="CRM & Pipeline"
+                    className={`grid h-9 w-9 place-items-center rounded-md ring-1 transition-all ${
+                      isNavActive("/crm", pathname)
+                        ? "bg-court-500/20 text-court-400 ring-court-500/50"
+                        : "bg-ink-850/90 text-court-400 ring-court-500/30 hover:bg-court-500/15"
+                    }`}
+                  >
+                    <Kanban className="h-4 w-4" />
+                  </Link>
+                )}
+              </div>
+
+              <nav className="flex flex-1 flex-col items-center gap-1 overflow-y-auto py-3">
+                {visibleGroups.flatMap((g) =>
+                  g.items.map((item) => {
+                    const active = isNavActive(item.to, pathname);
+                    const IconComp = getSidebarNavIcon(item.to);
+                    return (
+                      <Link
+                        key={item.to}
+                        to={item.to}
+                        preload="intent"
+                        title={item.label}
+                        className={`grid h-9 w-9 shrink-0 place-items-center rounded-md transition-colors ${
+                          active
+                            ? "bg-court-500/15 text-court-400 ring-1 ring-court-500/35"
+                            : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
+                        }`}
+                      >
+                        <IconComp className="h-4 w-4" />
+                      </Link>
+                    );
+                  }),
+                )}
+              </nav>
+
+              <div className="flex shrink-0 items-center justify-center border-t border-ink-800 py-3">
+                <div
+                  className="grid h-8 w-10 place-items-center rounded-md bg-ink-900 font-mono text-[9px] font-bold uppercase text-court-400 ring-1 ring-ink-800"
+                  title={`Plan · ${currentAcademy.plan} · Players used ${playersUsedCount}/${playersLimit}`}
+                >
+                  {currentAcademy.plan}
+                </div>
+              </div>
+            </>
+          )}
+        </aside>
+      </div>
 
       <div className="min-w-0 pb-20 lg:pb-0">
-        <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-ink-800 bg-ink-950/90 px-4 backdrop-blur lg:px-8">
-          {/* Mobile Navigation Drawer Trigger */}
-          <button
-            type="button"
-            onClick={() => setMobileDrawerOpen(true)}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-ink-850 text-ink-300 ring-1 ring-ink-700 hover:bg-ink-800 hover:text-ink-100 lg:hidden"
-            aria-label="Open Navigation Menu"
-          >
-            <Menu className="h-5 w-5 text-court-400" />
-          </button>
+        <header className="sticky top-0 z-20 flex min-h-16 flex-wrap items-center justify-between gap-3 border-b border-ink-800 bg-ink-950/90 px-4 py-2.5 backdrop-blur lg:px-8">
+          {/* Left Side: Mobile Trigger & Page Title */}
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setMobileDrawerOpen(true)}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-ink-850 text-ink-300 ring-1 ring-ink-700 hover:bg-ink-800 hover:text-ink-100 lg:hidden"
+              aria-label="Open Navigation Menu"
+            >
+              <Menu className="h-5 w-5 text-court-400" />
+            </button>
 
-          <div className="flex min-w-0 items-center gap-2.5">
             <span
               className="inline-flex shrink-0 items-center rounded-full bg-amber-400 px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-ink-950 shadow-sm ring-1 ring-amber-300 lg:hidden"
               title="Staging Environment"
             >
               STAGING
             </span>
-            <div className="flex min-w-0 items-baseline gap-3">
-              <span className="label-mono hidden sm:inline">{crumb}</span>
-              <h1 className="font-display truncate text-lg tracking-tight text-ink-100">{title}</h1>
-            </div>
+
+            {title ? (
+              <h1 className="font-display shrink-0 truncate text-lg tracking-tight text-ink-100">
+                {title}
+              </h1>
+            ) : null}
           </div>
-          <div className="ml-auto flex items-center gap-3">
-            {action ? <div className="hidden lg:flex items-center gap-2">{action}</div> : null}
-            <Link
-              to="/up-erp"
-              preload="intent"
-              className="hidden sm:inline-flex items-center gap-1.5 rounded-md bg-emerald-500/15 px-2.5 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wider text-emerald-300 ring-1 ring-emerald-500/40 hover:bg-emerald-500/25"
-              title="Switch to standalone UP ERP Ecosystem Hub"
-            >
-              <span>UP ERP Ecosystem</span>
-              <span className="rounded bg-emerald-400 px-1 py-0.2 text-[8px] text-ink-950">
-                HUB
-              </span>
-            </Link>
+
+          {/* Right Side: Page Action (if any), Currency, Notifications, Theme, Sign Out, Avatar & Profile */}
+          <div className="ml-auto flex flex-wrap items-center gap-3">
+            {action ? (
+              <div className="hidden lg:flex flex-wrap items-center gap-2">{action}</div>
+            ) : null}
             <span className="hidden md:inline-flex items-center rounded bg-ink-900 px-2 py-1 font-mono text-[10px] text-ink-400 ring-1 ring-ink-800">
               {currentAcademy?.currency || currentAcademy?.currencies?.join(" · ") || "USD"}
             </span>
@@ -1068,63 +1403,42 @@ export function AppShell({
             <ThemeToggle />
             {mounted && (user || passwordUser) ? (
               <div className="flex items-center gap-3">
-                <div className="hidden sm:flex flex-col text-right">
-                  <span className="text-xs font-semibold text-ink-100 leading-tight">
-                    {user?.displayName ||
-                      currentUser?.name ||
-                      passwordUser?.name ||
-                      (user?.email === "geogo3@gmail.com"
-                        ? "Georges Khoury"
-                        : user?.email?.split("@")[0]) ||
-                      "Academy Manager"}
-                  </span>
-                  <span className="text-[10px] font-mono text-court-400">
-                    {currentUser?.role || passwordUser?.role || "Academy Manager"}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIssueReportedConfirm(false);
-                    setReportIssueOpen(true);
-                  }}
-                  className="label-mono hidden items-center gap-1.5 rounded-md bg-ink-900 px-2.5 py-2 text-[10px] text-ink-300 ring-1 ring-ink-800 hover:text-court-300 xl:flex"
-                  title="Report a technical issue to the system administrator"
-                >
-                  <ShieldAlert className="h-3.5 w-3.5 text-court-400" />
-                  <span>Report Issue</span>
-                </button>
-                {isMasterOwner(authUser?.email) && (
-                  <button
-                    type="button"
-                    onClick={() => void copyDiagnosticReportToClipboard()}
-                    className="label-mono hidden items-center gap-1.5 rounded-md bg-court-500/15 px-2.5 py-2 text-[10px] text-court-300 ring-1 ring-court-500/30 hover:bg-court-500/25 xl:flex"
-                    title="Copy ready-to-paste AI Studio prompt block"
-                  >
-                    <Copy className="h-3.5 w-3.5 text-court-400" />
-                    <span>Copy AI Prompt Block</span>
-                  </button>
-                )}
                 <button
                   onClick={() => void handleSignOut()}
                   className="label-mono hidden items-center gap-2 rounded-md bg-ink-850 px-2.5 py-2 text-ink-300 ring-1 ring-ink-700 hover:bg-ink-800 sm:flex"
                 >
                   SIGN OUT
                 </button>
-                <div className="grid h-9 w-9 place-items-center bg-court-500/15 ring-1 ring-court-500/30 rounded-md overflow-hidden">
-                  {user?.photoURL ? (
-                    <img src={user.photoURL} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                    <span className="font-mono text-xs font-bold text-court-300">
-                      {(
-                        user?.displayName?.[0] ||
-                        currentUser?.name?.[0] ||
-                        passwordUser?.name?.[0] ||
-                        user?.email?.[0] ||
-                        "G"
-                      ).toUpperCase()}
+                <div className="flex items-center gap-2.5">
+                  <div className="grid h-9 w-9 shrink-0 place-items-center bg-court-500/15 ring-1 ring-court-500/30 rounded-md overflow-hidden">
+                    {user?.photoURL ? (
+                      <img src={user.photoURL} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="font-mono text-xs font-bold text-court-300">
+                        {(
+                          user?.displayName?.[0] ||
+                          currentUser?.name?.[0] ||
+                          passwordUser?.name?.[0] ||
+                          user?.email?.[0] ||
+                          "G"
+                        ).toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                  <div className="hidden sm:flex flex-col text-left">
+                    <span className="text-xs font-semibold text-ink-100 leading-tight">
+                      {user?.displayName ||
+                        currentUser?.name ||
+                        passwordUser?.name ||
+                        (user?.email === "geogo3@gmail.com"
+                          ? "Georges Khoury"
+                          : user?.email?.split("@")[0]) ||
+                        "Academy Manager"}
                     </span>
-                  )}
+                    <span className="text-[10px] font-mono text-court-400">
+                      {currentUser?.role || passwordUser?.role || "Academy Manager"}
+                    </span>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -1142,7 +1456,6 @@ export function AppShell({
         {/* Mobile Sub-Header Row for Workspace/Tenant, Branch, Role, Currency & Primary Controls */}
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ink-800 bg-ink-900/60 px-4 py-2 lg:hidden">
           <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-            <span className="label-mono text-[10px] text-ink-400 sm:hidden">{crumb} ·</span>
             <span className="inline-flex items-center rounded bg-ink-850 px-2 py-0.5 font-mono text-[10px] text-ink-200 ring-1 ring-ink-700">
               {currentAcademy.name}
             </span>
@@ -1493,15 +1806,36 @@ export function AppShell({
                 to="/up-erp"
                 preload="intent"
                 onClick={() => setMobileDrawerOpen(false)}
-                className="mt-2.5 flex items-center justify-between rounded-md bg-emerald-500/15 px-3 py-2 text-emerald-300 ring-1 ring-emerald-500/40"
+                className={`mt-2.5 flex items-center justify-between gap-2 rounded-md px-3 py-2 transition-all ${NEXUS_LINK_SURFACE_CLS}`}
               >
-                <span className="font-mono text-[11px] font-bold uppercase tracking-wider">
-                  UP ERP Ecosystem Hub
+                <span className="font-mono text-[11px] font-bold uppercase tracking-wider text-teal-950 dark:text-emerald-300">
+                  Vescio Nexus
                 </span>
-                <span className="rounded bg-emerald-400 px-1.5 py-0.5 font-mono text-[9px] font-bold text-ink-950">
-                  OPEN →
-                </span>
+                <VescioNexusIcon className="w-7 h-4 shrink-0" />
               </Link>
+
+              {hasModuleReadPermission("/crm") && (
+                <Link
+                  to="/crm"
+                  preload="intent"
+                  onClick={() => setMobileDrawerOpen(false)}
+                  className={`mt-2 flex items-center justify-between gap-2 rounded-md px-3 py-2 ring-1 transition-all ${
+                    isNavActive("/crm", pathname)
+                      ? "bg-court-500/20 text-court-300 ring-court-500/50"
+                      : "bg-ink-850/90 text-court-300 ring-court-500/30 hover:bg-court-500/15"
+                  }`}
+                >
+                  <div className="leading-tight min-w-0">
+                    <div className="font-mono text-[11px] font-bold uppercase tracking-wider text-court-300">
+                      CRM &amp; Pipeline
+                    </div>
+                    <div className="font-mono text-[9px] text-ink-400">
+                      Leads · Trials · Renewals
+                    </div>
+                  </div>
+                  <Kanban className="h-4 w-4 shrink-0 text-court-400" />
+                </Link>
+              )}
             </div>
 
             {/* Complete Navigation Groups */}

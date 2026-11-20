@@ -1,39 +1,30 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import {
-  Activity,
   ArrowLeft,
   Building2,
   Calendar,
-  CheckCircle2,
-  ClipboardList,
-  Clock,
   CreditCard,
   Dumbbell,
-  FileText,
-  Filter,
+  Edit3,
   HeartPulse,
   Layers,
+  MapPin,
   Minus,
-  Package,
   Plus,
   Printer,
-  RefreshCw,
   Search,
-  ShieldAlert,
+  Settings,
   ShoppingBag,
   ShoppingCart,
   Sparkles,
   Trash2,
-  TrendingUp,
   UserCheck,
   Users,
   Wallet,
-  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  Badge,
   Button,
   Chip,
   EmptyState,
@@ -49,18 +40,16 @@ import {
   Th,
   money,
 } from "@/components/kit";
+import { NexusCourtReservationsModule } from "@/components/nexus-court-reservations";
+import { VescioNexusIcon } from "@/components/vescio-nexus-icon";
 import {
-  COURT_ALLOCATION_OPTIONS,
   DEFAULT_POS_CATALOG,
-  calculateSessionDurationHours,
-  checkCourtScheduleConflict,
-  resolveCourtHourlyRates,
   todayISO,
   uid,
   useDB,
   useTenantUser,
-  type CourtAllocationType,
-  type CourtReservation,
+  type Branch,
+  type Court,
   type GymMember,
   type GymWorkoutLog,
   type LedgerEntry,
@@ -76,18 +65,18 @@ import {
 export const Route = createFileRoute("/up-erp")({
   head: () => ({
     meta: [
-      { title: "UP ERP Ecosystem — Vescio Vector" },
+      { title: "Vescio Nexus — Vescio Vector" },
       {
         name: "description",
         content:
-          "Standalone UP ERP Ecosystem Hub: Court & Facility Reservations, Gym & Strength, Physiotherapy & Medical, and Kiosk POS.",
+          "Vescio Nexus Multi-Branch Facility ERP: Nexus Branches, Court & Facility Reservations, Gym & Strength, Physiotherapy & Medical, and Kiosk POS.",
       },
     ],
   }),
-  component: UpErpEcosystemHub,
+  component: VescioNexusHub,
 });
 
-type UpErpModuleTab = "hub" | "courts" | "gym" | "physio" | "pos";
+type VescioNexusModuleTab = "hub" | "branches" | "courts" | "gym" | "physio" | "pos";
 
 const RTP_STAGES: Array<{
   stage: 1 | 2 | 3 | 4 | 5;
@@ -125,21 +114,28 @@ const POS_CATEGORIES: Array<"All" | PosItemCategory> = [
 function addDaysToIso(isoDate: string, days: number): string {
   const parts = isoDate.split("-").map(Number);
   if (parts.length !== 3 || parts.some(Number.isNaN)) return isoDate;
-  const dt = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2] + days));
+  const dt = new Date(Date.UTC(parts[0] ?? 2026, (parts[1] ?? 1) - 1, (parts[2] ?? 1) + days));
   return dt.toISOString().slice(0, 10);
 }
 
-function UpErpEcosystemHub() {
+type BranchDraftCourt = {
+  id: string;
+  name: string;
+  enableHalfCourts: boolean;
+  fullCourtHourlyRate: string;
+  halfCourtHourlyRate: string;
+  operatingHours: string;
+};
+
+function VescioNexusHub() {
   const { db, setEntity, patchEntity, deleteEntity } = useDB();
   const currentUser = useTenantUser();
 
-  const [activeModule, setActiveModule] = useState<UpErpModuleTab>("hub");
+  const [activeModule, setActiveModule] = useState<VescioNexusModuleTab>("hub");
   const [branchFilter, setBranchFilter] = useState<string>("All");
 
   const branches = useMemo(() => db.branches || [], [db.branches]);
   const players = useMemo(() => db.players || [], [db.players]);
-  const teams = useMemo(() => db.teams || [], [db.teams]);
-  const sessions = useMemo(() => db.sessions || [], [db.sessions]);
   const stock = useMemo(() => db.stock || [], [db.stock]);
   const reservations = useMemo(() => db.courtReservations || [], [db.courtReservations]);
   const gymMembers = useMemo(() => db.gymMembers || [], [db.gymMembers]);
@@ -151,6 +147,14 @@ function UpErpEcosystemHub() {
   const posTransactions = useMemo(() => db.posTransactions || [], [db.posTransactions]);
 
   const defaultBranchName = branches[0]?.name || "Main Branch";
+  const activeScopedBranchName = branchFilter !== "All" ? branchFilter : defaultBranchName;
+
+  const activeBranchObj = useMemo(
+    () =>
+      branches.find((b) => (b.name || "").toLowerCase() === activeScopedBranchName.toLowerCase()) ||
+      branches[0],
+    [branches, activeScopedBranchName],
+  );
 
   // Filtered datasets by branch
   const filteredReservations = useMemo(
@@ -194,7 +198,7 @@ function UpErpEcosystemHub() {
     [posTransactions, branchFilter],
   );
 
-  // Global UP ERP Ecosystem KPIs
+  // Global Vescio Nexus KPIs
   const ecosystemKpis = useMemo(() => {
     const today = todayISO();
     const activeReservations = filteredReservations.filter((r) => r.status !== "Cancelled");
@@ -213,7 +217,11 @@ function UpErpEcosystemHub() {
       .filter((m) => m.status === "Active")
       .reduce((sum, m) => sum + (Number(m.monthlyFee) || 0), 0);
 
-    const injuredOrLimitedPlayers = players.filter(
+    const scopedPlayers = players.filter(
+      (p) =>
+        branchFilter === "All" || (p.branch || "").toLowerCase() === branchFilter.toLowerCase(),
+    );
+    const injuredOrLimitedPlayers = scopedPlayers.filter(
       (p) => p.medicalStatus === "Injured" || p.medicalStatus === "Limited",
     ).length;
     const activeRehabCases = filteredPhysioRecords.filter(
@@ -245,309 +253,226 @@ function UpErpEcosystemHub() {
     filteredPhysioRecords,
     filteredPosTransactions,
     players,
+    branchFilter,
   ]);
 
   // =========================================================================
-  // MODULE 1 STATE: COURT & FACILITY RESERVATIONS
+  // NEXUS BRANCHES MANAGEMENT STATE & CRUD
   // =========================================================================
-  const [selectedCourtDate, setSelectedCourtDate] = useState<string>(todayISO());
-  const [reservationModalOpen, setReservationModalOpen] = useState(false);
-  const [editingReservationId, setEditingReservationId] = useState<string | null>(null);
-  const [resForm, setResForm] = useState<{
-    clientName: string;
-    clientType: CourtReservation["clientType"];
-    linkedPlayerId: string;
-    linkedTeamName: string;
+  const [branchModalOpen, setBranchModalOpen] = useState(false);
+  const [editingBranchId, setEditingBranchId] = useState<string | null>(null);
+  const [branchForm, setBranchForm] = useState<{
+    name: string;
+    city: string;
+    address: string;
+    manager: string;
     phone: string;
-    email: string;
-    branch: string;
-    court: string;
-    courtAllocation: CourtAllocationType;
-    date: string;
-    startTime: string;
-    endTime: string;
-    customHourlyRate: string;
-    paymentStatus: CourtReservation["paymentStatus"];
-    paymentMethod: NonNullable<CourtReservation["paymentMethod"]>;
-    paidAmount: string;
-    isRecurring: boolean;
-    recurringWeeks: number;
-    notes: string;
+    operatingHours: string;
+    courts: BranchDraftCourt[];
+    gymCapacity: string;
+    gymEquipmentNotes: string;
+    gymDefaultMonthlyFee: string;
+    physioRoomsCount: string;
+    leadPhysiotherapist: string;
+    physioClinicStatus: "Open" | "By Appointment" | "Closed";
+    posRegisterName: string;
+    posStartingFloat: string;
+    posStatus: "Open" | "Closed";
   }>({
-    clientName: "",
-    clientType: "External Client",
-    linkedPlayerId: "",
-    linkedTeamName: "",
+    name: "",
+    city: "Beirut",
+    address: "",
+    manager: currentUser?.name || "Branch Manager",
     phone: "",
-    email: "",
-    branch: defaultBranchName,
-    court: branches[0]?.courts?.[0]?.name || "Court 1",
-    courtAllocation: "Full Court",
-    date: todayISO(),
-    startTime: "18:00",
-    endTime: "19:30",
-    customHourlyRate: "",
-    paymentStatus: "Paid",
-    paymentMethod: "Cash",
-    paidAmount: "",
-    isRecurring: false,
-    recurringWeeks: 4,
-    notes: "",
+    operatingHours: "08:00 - 22:30",
+    courts: [
+      {
+        id: uid("crt"),
+        name: "Court 1",
+        enableHalfCourts: true,
+        fullCourtHourlyRate: "60",
+        halfCourtHourlyRate: "35",
+        operatingHours: "08:00 - 22:30",
+      },
+    ],
+    gymCapacity: "30",
+    gymEquipmentNotes: "4 Squat Racks, Sled Turf Track, Dumbbells 2-50kg, Plyo Boxes",
+    gymDefaultMonthlyFee: "65",
+    physioRoomsCount: "2",
+    leadPhysiotherapist: "Dr. Rami Khoury (PT)",
+    physioClinicStatus: "Open",
+    posRegisterName: "Main Kiosk Terminal #1",
+    posStartingFloat: "200",
+    posStatus: "Open",
   });
 
-  const selectedResBranchObj = useMemo(
-    () =>
-      branches.find((b) => (b.name || "").toLowerCase() === (resForm.branch || "").toLowerCase()) ||
-      branches[0],
-    [branches, resForm.branch],
-  );
-
-  const selectedResCourtObj = useMemo(
-    () =>
-      selectedResBranchObj?.courts?.find(
-        (c) => (c.name || "").toLowerCase() === (resForm.court || "").toLowerCase(),
-      ) || selectedResBranchObj?.courts?.[0],
-    [selectedResBranchObj, resForm.court],
-  );
-
-  const resRatePreview = useMemo(() => {
-    const rates = resolveCourtHourlyRates(selectedResCourtObj, selectedResBranchObj);
-    const isHalf = resForm.courtAllocation !== "Full Court";
-    const defaultRate = isHalf ? rates.halfCourtHourlyRate : rates.fullCourtHourlyRate;
-    const effectiveRate =
-      resForm.customHourlyRate.trim() !== ""
-        ? Math.max(0, Number(resForm.customHourlyRate) || 0)
-        : defaultRate;
-    const durationHours = calculateSessionDurationHours(resForm.startTime, resForm.endTime);
-    const totalAmount = Math.round(effectiveRate * durationHours * 100) / 100;
-    return {
-      ...rates,
-      defaultRate,
-      effectiveRate,
-      durationHours,
-      totalAmount,
-    };
-  }, [
-    selectedResCourtObj,
-    selectedResBranchObj,
-    resForm.courtAllocation,
-    resForm.customHourlyRate,
-    resForm.startTime,
-    resForm.endTime,
-  ]);
-
-  const resConflictPreview = useMemo(() => {
-    return checkCourtScheduleConflict(
-      {
-        branch: resForm.branch,
-        court: resForm.court,
-        courtAllocation: resForm.courtAllocation,
-        date: resForm.date,
-        time: resForm.startTime,
-        endTime: resForm.endTime,
-        durationHours: resRatePreview.durationHours,
-      },
-      sessions,
-      undefined,
-      reservations,
-      editingReservationId || undefined,
-    );
-  }, [
-    resForm.branch,
-    resForm.court,
-    resForm.courtAllocation,
-    resForm.date,
-    resForm.startTime,
-    resForm.endTime,
-    resRatePreview.durationHours,
-    sessions,
-    reservations,
-    editingReservationId,
-  ]);
-
-  const openNewReservationModal = (preset?: Partial<typeof resForm>) => {
-    const targetBranch =
-      preset?.branch || (branchFilter !== "All" ? branchFilter : defaultBranchName);
-    const branchObj = branches.find((b) => b.name === targetBranch) || branches[0];
-    const targetCourt = preset?.court || branchObj?.courts?.[0]?.name || "Court 1";
-    setEditingReservationId(null);
-    setResForm({
-      clientName: "",
-      clientType: "External Client",
-      linkedPlayerId: "",
-      linkedTeamName: "",
+  const openCreateBranchModal = () => {
+    setEditingBranchId(null);
+    setBranchForm({
+      name: "",
+      city: "Beirut",
+      address: "",
+      manager: currentUser?.name || "Branch Manager",
       phone: "",
-      email: "",
-      branch: targetBranch,
-      court: targetCourt,
-      courtAllocation: preset?.courtAllocation || "Full Court",
-      date: preset?.date || selectedCourtDate || todayISO(),
-      startTime: preset?.startTime || "18:00",
-      endTime: preset?.endTime || "19:30",
-      customHourlyRate: "",
-      paymentStatus: "Paid",
-      paymentMethod: "Cash",
-      paidAmount: "",
-      isRecurring: false,
-      recurringWeeks: 4,
-      notes: "",
-    });
-    setReservationModalOpen(true);
-  };
-
-  const handleSaveCourtReservation = async () => {
-    if (!resForm.clientName.trim()) {
-      toast.error("Please enter the client or booking name.");
-      return;
-    }
-    if (resConflictPreview.hasCourtConflict) {
-      toast.error(
-        resConflictPreview.courtConflictReason ||
-          "Court conflict detected for this time slot and allocation.",
-      );
-      return;
-    }
-
-    const weeksCount =
-      !editingReservationId && resForm.isRecurring
-        ? Math.max(1, Math.min(12, Number(resForm.recurringWeeks) || 1))
-        : 1;
-
-    // Verify all recurring weeks for conflicts first
-    for (let w = 0; w < weeksCount; w++) {
-      const targetDate = addDaysToIso(resForm.date, w * 7);
-      const check = checkCourtScheduleConflict(
+      operatingHours: "08:00 - 22:30",
+      courts: [
         {
-          branch: resForm.branch,
-          court: resForm.court,
-          courtAllocation: resForm.courtAllocation,
-          date: targetDate,
-          time: resForm.startTime,
-          endTime: resForm.endTime,
-          durationHours: resRatePreview.durationHours,
+          id: uid("crt"),
+          name: "Court 1",
+          enableHalfCourts: true,
+          fullCourtHourlyRate: "60",
+          halfCourtHourlyRate: "35",
+          operatingHours: "08:00 - 22:30",
         },
-        sessions,
-        undefined,
-        reservations,
-        editingReservationId || undefined,
-      );
-      if (check.hasCourtConflict) {
-        toast.error(
-          `Conflict on recurring week ${w + 1} (${targetDate}): ${check.courtConflictReason}`,
-        );
-        return;
-      }
-    }
-
-    const groupId = weeksCount > 1 ? uid("rec-grp") : undefined;
-    const nowIso = new Date().toISOString();
-    const singleTotal = resRatePreview.totalAmount;
-    const singlePaid =
-      resForm.paymentStatus === "Paid"
-        ? singleTotal
-        : resForm.paymentStatus === "Partial"
-          ? Math.min(singleTotal, Math.max(0, Number(resForm.paidAmount) || 0))
-          : 0;
-
-    for (let w = 0; w < weeksCount; w++) {
-      const slotDate = addDaysToIso(resForm.date, w * 7);
-      const id = w === 0 && editingReservationId ? editingReservationId : uid("res");
-
-      const record: CourtReservation = {
-        id,
-        clientName: resForm.clientName.trim(),
-        clientType: resForm.clientType,
-        linkedPlayerId: resForm.linkedPlayerId || undefined,
-        linkedTeamName: resForm.linkedTeamName || undefined,
-        phone: resForm.phone.trim(),
-        email: resForm.email.trim() || undefined,
-        branch: resForm.branch,
-        court: resForm.court,
-        courtAllocation: resForm.courtAllocation,
-        date: slotDate,
-        startTime: resForm.startTime,
-        endTime: resForm.endTime,
-        durationHours: resRatePreview.durationHours,
-        hourlyRate: resRatePreview.effectiveRate,
-        totalAmount: singleTotal,
-        paidAmount: singlePaid,
-        paymentStatus: resForm.paymentStatus,
-        paymentMethod: resForm.paymentMethod,
-        isRecurring: weeksCount > 1,
-        recurringWeeks: weeksCount > 1 ? weeksCount : undefined,
-        recurringGroupId: groupId,
-        status: "Confirmed",
-        notes: resForm.notes.trim() || undefined,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      };
-
-      await setEntity("courtReservations", record);
-
-      // Post to Accounting Ledger or Player Balance on new creation
-      if (!editingReservationId) {
-        if (singlePaid > 0 && resForm.paymentStatus !== "Charged to Account") {
-          const ledgerEntry: LedgerEntry = {
-            id: uid("led-res"),
-            date: slotDate,
-            account: "Court Rental Income (UP ERP)",
-            category: "Facility Reservation",
-            entry: `Court Rental · ${record.clientName} (${record.court} · ${record.courtAllocation})`,
-            description: `${record.date} ${record.startTime}-${record.endTime} · ${record.paymentMethod || "Cash"}`,
-            type: "Revenue",
-            amount: singlePaid,
-            status: "Collected",
-            branch: record.branch,
-            referenceId: record.id,
-          };
-          await setEntity("ledger", ledgerEntry);
-        } else if (resForm.paymentStatus === "Charged to Account" && resForm.linkedPlayerId) {
-          const targetPlayer = players.find((p) => p.id === resForm.linkedPlayerId);
-          if (targetPlayer) {
-            await patchEntity("players", targetPlayer.id, {
-              balance: Math.round(((Number(targetPlayer.balance) || 0) + singleTotal) * 100) / 100,
-            });
-          }
-        }
-      }
-    }
-
-    toast.success(
-      weeksCount > 1
-        ? `Booked ${weeksCount} recurring weekly court reservations (${resForm.courtAllocation})!`
-        : editingReservationId
-          ? "Court reservation updated."
-          : `Court reservation confirmed (${resForm.court} · ${resForm.courtAllocation}).`,
-    );
-    setReservationModalOpen(false);
-  };
-
-  const handleCollectReservationPayment = async (res: CourtReservation) => {
-    const remaining = Math.max(0, (Number(res.totalAmount) || 0) - (Number(res.paidAmount) || 0));
-    if (remaining <= 0) return;
-
-    await patchEntity("courtReservations", res.id, {
-      paidAmount: res.totalAmount,
-      paymentStatus: "Paid",
-      updatedAt: new Date().toISOString(),
+      ],
+      gymCapacity: "30",
+      gymEquipmentNotes: "4 Squat Racks, Sled Turf Track, Dumbbells 2-50kg, Plyo Boxes",
+      gymDefaultMonthlyFee: "65",
+      physioRoomsCount: "2",
+      leadPhysiotherapist: "Dr. Rami Khoury (PT)",
+      physioClinicStatus: "Open",
+      posRegisterName: "Main Kiosk Terminal #1",
+      posStartingFloat: "200",
+      posStatus: "Open",
     });
-
-    const ledgerEntry: LedgerEntry = {
-      id: uid("led-res"),
-      date: todayISO(),
-      account: "Court Rental Income (UP ERP)",
-      category: "Facility Reservation",
-      entry: `Court Rental Settlement · ${res.clientName} (${res.court} · ${res.courtAllocation})`,
-      description: `Settled balance for reservation on ${res.date} (${res.startTime}-${res.endTime})`,
-      type: "Revenue",
-      amount: remaining,
-      status: "Collected",
-      branch: res.branch,
-      referenceId: res.id,
-    };
-    await setEntity("ledger", ledgerEntry);
-    toast.success(`Collected ${money(remaining)} for ${res.clientName}'s court reservation.`);
+    setBranchModalOpen(true);
   };
+
+  const openEditBranchModal = (b: Branch) => {
+    setEditingBranchId(b.id);
+    const existingCourts: BranchDraftCourt[] =
+      b.courts && b.courts.length > 0
+        ? b.courts.map((c, idx) => ({
+            id: c.id || uid(`crt-${idx}`),
+            name: c.name || `Court ${idx + 1}`,
+            enableHalfCourts: c.enableHalfCourts !== false,
+            fullCourtHourlyRate: String(c.fullCourtHourlyRate ?? b.rentalRate ?? 60),
+            halfCourtHourlyRate: String(
+              c.halfCourtHourlyRate ?? Math.round((c.fullCourtHourlyRate ?? 60) * 0.6),
+            ),
+            operatingHours: c.operatingHours || b.operatingHours || "08:00 - 22:30",
+          }))
+        : [
+            {
+              id: uid("crt"),
+              name: "Court 1",
+              enableHalfCourts: true,
+              fullCourtHourlyRate: "60",
+              halfCourtHourlyRate: "35",
+              operatingHours: b.operatingHours || "08:00 - 22:30",
+            },
+          ];
+
+    setBranchForm({
+      name: b.name || "",
+      city: b.city || "Beirut",
+      address: b.address || "",
+      manager: b.manager || currentUser?.name || "Branch Manager",
+      phone: b.phone || "",
+      operatingHours: b.operatingHours || "08:00 - 22:30",
+      courts: existingCourts,
+      gymCapacity: String(b.gymCapacity ?? 30),
+      gymEquipmentNotes:
+        b.gymEquipmentNotes || "4 Squat Racks, Sled Turf Track, Dumbbells 2-50kg, Plyo Boxes",
+      gymDefaultMonthlyFee: String(b.gymDefaultMonthlyFee ?? 65),
+      physioRoomsCount: String(b.physioRoomsCount ?? 2),
+      leadPhysiotherapist: b.leadPhysiotherapist || "Dr. Rami Khoury (PT)",
+      physioClinicStatus: b.physioClinicStatus || "Open",
+      posRegisterName: b.posRegisterName || `${b.name} Kiosk Terminal #1`,
+      posStartingFloat: String(b.posStartingFloat ?? 200),
+      posStatus: b.posStatus || "Open",
+    });
+    setBranchModalOpen(true);
+  };
+
+  const handleSaveNexusBranch = async () => {
+    if (!branchForm.name.trim()) {
+      toast.error("Please enter a branch name.");
+      return;
+    }
+    const existingBranch = editingBranchId
+      ? branches.find((b) => b.id === editingBranchId)
+      : undefined;
+
+    const normalizedCourts: Court[] =
+      branchForm.courts.length > 0
+        ? branchForm.courts.map((c, idx) => {
+            const prevCourt = existingBranch?.courts?.find(
+              (pc) => pc.id === c.id || pc.name === c.name,
+            );
+            const fullRate = Math.max(0, Number(c.fullCourtHourlyRate) || 60);
+            const halfRate = Math.max(0, Number(c.halfCourtHourlyRate) || 35);
+            return {
+              ...prevCourt,
+              id: c.id || uid(`crt-${idx}`),
+              name: c.name.trim() || `Court ${idx + 1}`,
+              contact: prevCourt?.contact || branchForm.manager.trim() || "Facility Desk",
+              phone: prevCourt?.phone || branchForm.phone.trim() || "",
+              operatingHours: c.operatingHours.trim() || branchForm.operatingHours.trim(),
+              enableHalfCourts: c.enableHalfCourts,
+              fullCourtHourlyRate: fullRate,
+              halfCourtHourlyRate: halfRate,
+              feeType: "per_hour",
+              feeAmount: fullRate,
+            };
+          })
+        : [
+            {
+              id: uid("crt"),
+              name: "Court 1",
+              contact: branchForm.manager.trim() || "Facility Desk",
+              phone: branchForm.phone.trim() || "",
+              operatingHours: branchForm.operatingHours.trim() || "08:00 - 22:30",
+              enableHalfCourts: true,
+              fullCourtHourlyRate: 60,
+              halfCourtHourlyRate: 35,
+              feeType: "per_hour",
+              feeAmount: 60,
+            },
+          ];
+
+    const branchRecord: Branch = {
+      ...(existingBranch || {
+        teams: 0,
+        players: 0,
+      }),
+      id: editingBranchId || uid("br"),
+      name: branchForm.name.trim(),
+      city: branchForm.city.trim() || "Beirut",
+      address: branchForm.address.trim() || branchForm.city.trim() || "Main Facility Campus",
+      manager: branchForm.manager.trim() || "Branch Manager",
+      phone: branchForm.phone.trim() || undefined,
+      operatingHours: branchForm.operatingHours.trim() || "08:00 - 22:30",
+      courtsCount: normalizedCourts.length,
+      courts: normalizedCourts,
+      rentalType: existingBranch?.rentalType || "Per session",
+      rentalRate: normalizedCourts[0]?.fullCourtHourlyRate ?? 60,
+      gymCapacity: Math.max(1, Number(branchForm.gymCapacity) || 30),
+      gymEquipmentNotes: branchForm.gymEquipmentNotes.trim() || undefined,
+      gymDefaultMonthlyFee: Math.max(0, Number(branchForm.gymDefaultMonthlyFee) || 65),
+      physioRoomsCount: Math.max(1, Number(branchForm.physioRoomsCount) || 2),
+      leadPhysiotherapist: branchForm.leadPhysiotherapist.trim() || "Lead Physiotherapist",
+      physioClinicStatus: branchForm.physioClinicStatus,
+      posRegisterName:
+        branchForm.posRegisterName.trim() || `${branchForm.name.trim()} Kiosk Register #1`,
+      posStartingFloat: Math.max(0, Number(branchForm.posStartingFloat) || 200),
+      posStatus: branchForm.posStatus,
+    };
+
+    await setEntity("branches", branchRecord);
+    setBranchFilter(branchRecord.name);
+    setBranchModalOpen(false);
+    toast.success(
+      editingBranchId
+        ? `Updated Nexus Branch "${branchRecord.name}" configuration.`
+        : `Created Nexus Branch "${branchRecord.name}" and switched active view.`,
+    );
+  };
+
+  // =========================================================================
+  // MODULE 1 TRIGGER: COURT & FACILITY RESERVATIONS
+  // =========================================================================
+  const [courtNewBookingTrigger, setCourtNewBookingTrigger] = useState(0);
 
   // =========================================================================
   // MODULE 2 STATE: GYM & STRENGTH MODULE
@@ -579,6 +504,18 @@ function UpErpEcosystemHub() {
     expiryDate: addDaysToIso(todayISO(), 30),
     paymentMethod: "Cash",
   });
+
+  const openEnrollGymModal = () => {
+    const targetBranch = branchFilter !== "All" ? branchFilter : defaultBranchName;
+    const bObj = branches.find((b) => b.name === targetBranch);
+    const defaultFee = String(bObj?.gymDefaultMonthlyFee ?? 65);
+    setGymForm((prev) => ({
+      ...prev,
+      branch: targetBranch,
+      monthlyFee: defaultFee,
+    }));
+    setGymModalOpen(true);
+  };
 
   const [workoutForm, setWorkoutForm] = useState<{
     date: string;
@@ -650,7 +587,7 @@ function UpErpEcosystemHub() {
         const ledgerEntry: LedgerEntry = {
           id: uid("led-gym"),
           date: todayISO(),
-          account: "Gym & Strength Memberships (UP ERP)",
+          account: "Gym & Strength Memberships (Vescio Nexus)",
           category: "Gym & S&C",
           entry: `Gym Membership · ${newMember.memberName} (${newMember.packageType})`,
           description: `${newMember.memberType} · ${gymForm.paymentMethod}`,
@@ -778,6 +715,17 @@ function UpErpEcosystemHub() {
     rtpStage: 2,
     restrictions: "No 5v5 contact scrimmages; cleared for shooting & controlled footwork.",
   });
+
+  const openPhysioIntakeModal = () => {
+    const targetBranch = branchFilter !== "All" ? branchFilter : defaultBranchName;
+    const bObj = branches.find((b) => b.name === targetBranch);
+    setPhysioForm((prev) => ({
+      ...prev,
+      branch: targetBranch,
+      therapistName: bObj?.leadPhysiotherapist || prev.therapistName,
+    }));
+    setPhysioIntakeOpen(true);
+  };
 
   const [treatmentForm, setTreatmentForm] = useState<{
     date: string;
@@ -932,7 +880,7 @@ function UpErpEcosystemHub() {
       const ledgerEntry: LedgerEntry = {
         id: uid("led-physio"),
         date: sessionItem.date,
-        account: "Physiotherapy & Medical Clinic (UP ERP)",
+        account: "Physiotherapy & Medical Clinic (Vescio Nexus)",
         category: "Physiotherapy",
         entry: `Physio Session · ${activePhysioRecord.patientName} (${sessionItem.modality})`,
         description: `Therapist: ${sessionItem.therapistName}`,
@@ -979,20 +927,44 @@ function UpErpEcosystemHub() {
     price: string;
     stock: string;
     sku: string;
+    branch: string;
   }>({
     name: "",
     category: "Hydration & Drinks",
     price: "3.00",
     stock: "50",
     sku: "",
+    branch: "All",
   });
 
-  // Merge POS Catalog with live Academy Merchandise Stock items so academy uniforms/kits are sellable on-site
+  // Merge POS Catalog with live Academy Merchandise Stock items (scoped by selected branch)
   const unifiedPosCatalog = useMemo<PosCatalogItem[]>(() => {
-    const baseItems = posCatalog.filter((c) => c.active !== false);
+    const baseItems = posCatalog.filter((c) => {
+      if (c.active === false) return false;
+      if (
+        branchFilter !== "All" &&
+        c.branch &&
+        c.branch !== "All" &&
+        c.branch.toLowerCase() !== branchFilter.toLowerCase()
+      ) {
+        return false;
+      }
+      return true;
+    });
     const linkedStockIds = new Set(baseItems.map((b) => b.linkedStockId).filter(Boolean));
     const stockMapped: PosCatalogItem[] = stock
-      .filter((s) => !linkedStockIds.has(s.id))
+      .filter((s) => {
+        if (linkedStockIds.has(s.id)) return false;
+        if (
+          branchFilter !== "All" &&
+          s.branch &&
+          s.branch !== "All" &&
+          s.branch.toLowerCase() !== branchFilter.toLowerCase()
+        ) {
+          return false;
+        }
+        return true;
+      })
       .map((s) => ({
         id: `stock-pos-${s.id}`,
         name: `${s.item}${s.variant ? ` (${s.variant})` : ""}`,
@@ -1001,10 +973,11 @@ function UpErpEcosystemHub() {
         stock: Number(s.stock) || 0,
         sku: `STK-${s.id.slice(-4).toUpperCase()}`,
         linkedStockId: s.id,
+        branch: s.branch,
         active: true,
       }));
     return [...baseItems, ...stockMapped];
-  }, [posCatalog, stock]);
+  }, [posCatalog, stock, branchFilter]);
 
   const filteredPosCatalog = useMemo(() => {
     const q = posSearch.trim().toLowerCase();
@@ -1190,7 +1163,7 @@ function UpErpEcosystemHub() {
       const receivableEntry: LedgerEntry = {
         id: uid("led-pos"),
         date: today,
-        account: "Kiosk POS Sales (UP ERP)",
+        account: "Kiosk POS Sales (Vescio Nexus)",
         category: "Kiosk POS",
         entry: `POS Account Charge (${receiptNumber}) · ${resolvedCustomerName}`,
         description: posCart.map((i) => `${i.quantity}x ${i.name}`).join(", "),
@@ -1205,7 +1178,7 @@ function UpErpEcosystemHub() {
       const collectedEntry: LedgerEntry = {
         id: uid("led-pos"),
         date: today,
-        account: "Kiosk POS Sales (UP ERP)",
+        account: "Kiosk POS Sales (Vescio Nexus)",
         category: "Kiosk POS",
         entry: `POS Sale (${receiptNumber}) · ${paymentMethod} · ${resolvedCustomerName}`,
         description: posCart.map((i) => `${i.quantity}x ${i.name}`).join(", "),
@@ -1240,6 +1213,7 @@ function UpErpEcosystemHub() {
       price: Math.max(0, Number(newCatalogItem.price) || 0),
       stock: Math.max(0, Number(newCatalogItem.stock) || 0),
       sku: newCatalogItem.sku.trim() || `POS-${Date.now().toString().slice(-4)}`,
+      branch: newCatalogItem.branch === "All" ? undefined : newCatalogItem.branch,
       active: true,
     };
     // Ensure default catalog items are persisted in Firestore alongside the new item
@@ -1255,9 +1229,10 @@ function UpErpEcosystemHub() {
       price: "3.00",
       stock: "50",
       sku: "",
+      branch: branchFilter !== "All" ? branchFilter : "All",
     });
     setPosCatalogModalOpen(false);
-    toast.success(`Added "${item.name}" to the Kiosk POS catalog.`);
+    toast.success(`Added "${item.name}" to the Vescio Nexus Kiosk POS catalog.`);
   };
 
   // Daily Register Summary for POS
@@ -1284,98 +1259,43 @@ function UpErpEcosystemHub() {
     };
   }, [filteredPosTransactions]);
 
-  // Combined Court Schedule for Selected Date (Academy Sessions + UP ERP Reservations)
-  const unifiedCourtSlotsForDate = useMemo(() => {
-    const academySlots = sessions
-      .filter(
-        (s) =>
-          s.date === selectedCourtDate &&
-          s.status !== "Cancelled" &&
-          (branchFilter === "All" || (s.branch || "").toLowerCase() === branchFilter.toLowerCase()),
-      )
-      .map((s) => ({
-        id: s.id,
-        source: "Academy Session" as const,
-        title: s.title,
-        clientOrTeam: s.team || s.teamA || s.kind,
-        branch: s.branch,
-        court: s.court || "Court 1",
-        allocation: (s.courtAllocation || "Full Court") as CourtAllocationType,
-        startTime: s.time,
-        endTime: s.endTime || "",
-        status: s.status,
-        feeLabel: s.courtRentalCost ? money(s.courtRentalCost) : "Academy Internal",
-      }));
-
-    const erpSlots = filteredReservations
-      .filter((r) => r.date === selectedCourtDate && r.status !== "Cancelled")
-      .map((r) => ({
-        id: r.id,
-        source: "UP ERP Rental" as const,
-        title: r.clientName,
-        clientOrTeam: r.clientType,
-        branch: r.branch,
-        court: r.court,
-        allocation: r.courtAllocation,
-        startTime: r.startTime,
-        endTime: r.endTime,
-        status: r.paymentStatus,
-        feeLabel: money(r.totalAmount),
-      }));
-
-    return [...academySlots, ...erpSlots].sort((a, b) =>
-      (a.startTime || "").localeCompare(b.startTime || ""),
-    );
-  }, [sessions, filteredReservations, selectedCourtDate, branchFilter]);
-
   return (
-    <div className="min-h-screen bg-ink-950 text-ink-100 flex flex-col">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-ink-950 text-ink-100 flex flex-col">
       {/* =================================================================== */}
-      {/* STANDALONE UP ERP ECOSYSTEM PERSISTENT TOP HEADER BAR               */}
+      {/* STANDALONE VESCIO NEXUS PERSISTENT TOP HEADER BAR                   */}
       {/* =================================================================== */}
-      <header className="sticky top-0 z-30 border-b border-ink-800 bg-ink-950/95 backdrop-blur">
-        <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-3 lg:px-8">
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Persistent "Back to Vescio Vector Academy" Button Available at All Times */}
-            <Link
-              to="/"
-              className="inline-flex items-center gap-2 rounded-lg bg-court-500 px-3.5 py-2 font-mono text-xs font-bold uppercase tracking-wider text-ink-950 shadow-md ring-1 ring-court-400 transition-all hover:bg-court-400"
-            >
-              <ArrowLeft className="h-4 w-4 stroke-[2.5]" />
-              <span>Back to Vescio Vector Academy</span>
-            </Link>
-
-            <div className="hidden h-6 w-px bg-ink-800 sm:block" />
-
-            <div className="flex items-center gap-2.5">
-              <div className="grid h-9 w-9 place-items-center rounded-lg bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/30">
-                <Layers className="h-5 w-5" />
+      <header className="sticky top-0 z-30 w-full max-w-full border-b border-ink-800 bg-ink-950/95 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-3 lg:px-8">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="grid h-9 w-11 shrink-0 place-items-center rounded-lg bg-emerald-500/10 ring-1 ring-emerald-500/30">
+              <VescioNexusIcon className="h-4 w-7" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-display text-base font-semibold tracking-tight text-ink-100">
+                  Nexus
+                </span>
+                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-emerald-300 ring-1 ring-emerald-500/30">
+                  MULTI-BRANCH HUB
+                </span>
               </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-display text-base tracking-tight text-ink-100">
-                    UP ERP ECOSYSTEM
-                  </span>
-                  <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-emerald-300 ring-1 ring-emerald-500/30">
-                    LIVE HUB
-                  </span>
-                </div>
-                <div className="font-mono text-[10px] text-ink-400">
-                  Synced with {db.academy?.name || "Vescio Vector"} Roster, Courts, Stock & Ledger
-                </div>
+              <div className="truncate font-mono text-[10px] text-ink-400">
+                Synced with {db.academy?.name || "Vescio Vector"} Roster, Courts, Stock &amp; Ledger
               </div>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2.5">
+          <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
+            {/* Global Vescio Nexus Branch Selector Dropdown */}
             <div className="flex items-center gap-2 rounded-md bg-ink-900 px-2.5 py-1.5 ring-1 ring-ink-800">
-              <Building2 className="h-3.5 w-3.5 text-court-400" />
+              <Building2 className="h-3.5 w-3.5 shrink-0 text-court-400" />
               <span className="font-mono text-[10px] uppercase tracking-wider text-ink-400">
-                Facility Branch:
+                Nexus Branch:
               </span>
               <select
                 value={branchFilter}
                 onChange={(e) => setBranchFilter(e.target.value)}
+                aria-label="Global Nexus Branch Selector"
                 className="bg-transparent font-mono text-xs font-semibold text-ink-100 focus:outline-none"
               >
                 <option value="All" className="bg-ink-900">
@@ -1389,46 +1309,72 @@ function UpErpEcosystemHub() {
               </select>
             </div>
 
+            <button
+              type="button"
+              onClick={() => setActiveModule("branches")}
+              className="inline-flex items-center gap-1.5 rounded-md bg-ink-900 px-2.5 py-1.5 font-mono text-xs font-semibold text-court-300 ring-1 ring-court-500/30 hover:bg-court-500/15"
+              title="Configure Nexus Branches, Courts, Gym Capacity, Physio Rooms & POS Registers"
+            >
+              <Settings className="h-3.5 w-3.5 text-court-400" />
+              <span>Nexus Branches ({branches.length})</span>
+            </button>
+
             {activeModule !== "hub" && (
               <button
                 type="button"
                 onClick={() => setActiveModule("hub")}
-                className="inline-flex items-center gap-1.5 rounded-md bg-ink-850 px-3 py-2 font-mono text-xs text-ink-200 ring-1 ring-ink-700 hover:bg-ink-800 hover:text-ink-100"
+                className="inline-flex items-center gap-1.5 rounded-md bg-ink-850 px-3 py-1.5 font-mono text-xs text-ink-200 ring-1 ring-ink-700 hover:bg-ink-800 hover:text-ink-100"
               >
                 <Layers className="h-3.5 w-3.5 text-emerald-400" />
-                <span>UP ERP Hub Home</span>
+                <span>Vescio Nexus Home</span>
               </button>
             )}
           </div>
         </div>
 
-        {/* Module Navigation Sub-Bar */}
-        <div className="border-t border-ink-800/80 bg-ink-900/60">
-          <div className="mx-auto flex max-w-[1600px] items-center gap-2 overflow-x-auto px-4 py-2 lg:px-8">
+        {/* Module Navigation Sub-Bar (Compact Single-Row with Back to Vector on Far Right) */}
+        <div className="w-full max-w-full border-t border-ink-800/80 bg-ink-900/60">
+          <div className="mx-auto flex w-full max-w-[1600px] flex-nowrap items-center gap-1.5 overflow-x-auto px-4 py-2 lg:px-8">
             <button
               type="button"
               onClick={() => setActiveModule("hub")}
-              className={`inline-flex shrink-0 items-center gap-2 rounded-md px-3.5 py-2 font-mono text-xs font-semibold transition-all ${
+              className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
                 activeModule === "hub"
                   ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40"
                   : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
               }`}
             >
-              <Layers className="h-3.5 w-3.5" />
-              <span>UP ERP Overview Hub</span>
+              <Layers className="h-3.5 w-3.5 shrink-0" />
+              <span>Nexus Overview</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveModule("branches")}
+              className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
+                activeModule === "branches"
+                  ? "bg-purple-500/20 text-purple-300 ring-1 ring-purple-500/40"
+                  : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
+              }`}
+            >
+              <Building2 className="h-3.5 w-3.5 shrink-0" />
+              <span>Branches</span>
+              <span className="rounded bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-purple-300">
+                {branches.length}
+              </span>
             </button>
 
             <button
               type="button"
               onClick={() => setActiveModule("courts")}
-              className={`inline-flex shrink-0 items-center gap-2 rounded-md px-3.5 py-2 font-mono text-xs font-semibold transition-all ${
+              className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
                 activeModule === "courts"
                   ? "bg-court-500/20 text-court-300 ring-1 ring-court-500/40"
                   : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
               }`}
             >
-              <Calendar className="h-3.5 w-3.5" />
-              <span>1. Court & Facility Reservations</span>
+              <Calendar className="h-3.5 w-3.5 shrink-0" />
+              <span>Court Reservation</span>
               <span className="rounded bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-court-300">
                 {ecosystemKpis.activeReservationsCount}
               </span>
@@ -1437,14 +1383,14 @@ function UpErpEcosystemHub() {
             <button
               type="button"
               onClick={() => setActiveModule("gym")}
-              className={`inline-flex shrink-0 items-center gap-2 rounded-md px-3.5 py-2 font-mono text-xs font-semibold transition-all ${
+              className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
                 activeModule === "gym"
                   ? "bg-sky-500/20 text-sky-300 ring-1 ring-sky-500/40"
                   : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
               }`}
             >
-              <Dumbbell className="h-3.5 w-3.5" />
-              <span>2. Gym & Strength</span>
+              <Dumbbell className="h-3.5 w-3.5 shrink-0" />
+              <span>Gym</span>
               <span className="rounded bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-sky-300">
                 {ecosystemKpis.activeGymCount}
               </span>
@@ -1453,14 +1399,14 @@ function UpErpEcosystemHub() {
             <button
               type="button"
               onClick={() => setActiveModule("physio")}
-              className={`inline-flex shrink-0 items-center gap-2 rounded-md px-3.5 py-2 font-mono text-xs font-semibold transition-all ${
+              className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
                 activeModule === "physio"
                   ? "bg-rose-500/20 text-rose-300 ring-1 ring-rose-500/40"
                   : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
               }`}
             >
-              <HeartPulse className="h-3.5 w-3.5" />
-              <span>3. Physiotherapy & Medical</span>
+              <HeartPulse className="h-3.5 w-3.5 shrink-0" />
+              <span>Physiotherapy</span>
               <span className="rounded bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-rose-300">
                 {ecosystemKpis.activeRehabCases}
               </span>
@@ -1469,28 +1415,36 @@ function UpErpEcosystemHub() {
             <button
               type="button"
               onClick={() => setActiveModule("pos")}
-              className={`inline-flex shrink-0 items-center gap-2 rounded-md px-3.5 py-2 font-mono text-xs font-semibold transition-all ${
+              className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
                 activeModule === "pos"
                   ? "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40"
                   : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
               }`}
             >
-              <ShoppingCart className="h-3.5 w-3.5" />
-              <span>4. Kiosk POS (Point of Sale)</span>
+              <ShoppingCart className="h-3.5 w-3.5 shrink-0" />
+              <span>Kiosk POS</span>
               <span className="rounded bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-amber-300">
                 {money(ecosystemKpis.todayPosSales)}
               </span>
             </button>
+
+            <Link
+              to="/"
+              className="ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-court-500 px-3 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wider text-ink-950 shadow-sm ring-1 ring-court-400 transition-all hover:bg-court-400"
+            >
+              <ArrowLeft className="h-3.5 w-3.5 stroke-[2.5]" />
+              <span>Back to Vector</span>
+            </Link>
           </div>
         </div>
       </header>
 
       {/* =================================================================== */}
-      {/* MAIN UP ERP CONTENT CONTAINER                                       */}
+      {/* MAIN VESCIO NEXUS CONTENT CONTAINER                                 */}
       {/* =================================================================== */}
-      <main className="mx-auto w-full max-w-[1600px] flex-1 px-4 py-6 lg:px-8 space-y-6">
+      <main className="mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 py-6 lg:px-8 space-y-6">
         {/* Top KPI Strip */}
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Stat
             label="Court Rentals Collected"
             value={money(ecosystemKpis.courtRevenueCollected)}
@@ -1516,29 +1470,33 @@ function UpErpEcosystemHub() {
         </div>
 
         {/* ================================================================= */}
-        {/* VIEW 0: STANDALONE UP ERP HUB LANDING PAGE                        */}
+        {/* VIEW 0: VESCIO NEXUS LANDING PAGE                                 */}
         {/* ================================================================= */}
         {activeModule === "hub" && (
-          <div className="space-y-6">
+          <div className="min-w-0 max-w-full space-y-6">
             <div className="rounded-xl border border-emerald-500/30 bg-gradient-to-r from-ink-900 via-ink-900 to-emerald-950/40 p-6">
               <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="space-y-1.5 max-w-2xl">
+                <div className="min-w-0 max-w-2xl space-y-1.5">
                   <div className="inline-flex items-center gap-2 rounded-full bg-emerald-500/15 px-3 py-1 font-mono text-[10px] font-semibold uppercase tracking-widest text-emerald-300 ring-1 ring-emerald-500/30">
                     <Sparkles className="h-3 w-3" />
-                    <span>Unified Multi-Vertical Sports Facility ERP</span>
+                    <span>Unified Multi-Branch Sports Facility ERP</span>
                   </div>
                   <h2 className="font-display text-2xl tracking-tight text-ink-100">
-                    Welcome to the UP ERP Ecosystem Hub
+                    Welcome to Vescio Nexus
                   </h2>
                   <p className="text-xs text-ink-300 leading-relaxed">
-                    All 4 facility pillars share the exact same live Vescio Vector database: court
-                    allocations (Full Court, HCA, HCB) prevent double-bookings with Academy
-                    practices, Physiotherapy medical statuses update Academy player rosters in real
-                    time, and Kiosk POS / Gym charges post directly to player accounts and the
-                    central accounting ledger.
+                    All 4 facility pillars share the exact same live Vescio Vector database and
+                    multi-branch foundation: court allocations (Full Court, HCA, HCB) prevent
+                    double-bookings with Academy practices, Physiotherapy medical statuses update
+                    Academy player rosters in real time, and Kiosk POS / Gym charges post directly
+                    to player accounts and the central accounting ledger.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2.5">
+                  <Button variant="ghost" onClick={() => setActiveModule("branches")}>
+                    <Building2 className="mr-1.5 h-3.5 w-3.5 text-purple-400" />
+                    Manage Nexus Branches ({branches.length})
+                  </Button>
                   <Link
                     to="/"
                     className="inline-flex items-center gap-2 rounded-lg bg-ink-850 px-4 py-2.5 font-mono text-xs font-semibold text-ink-100 ring-1 ring-ink-700 hover:bg-ink-800"
@@ -1550,22 +1508,58 @@ function UpErpEcosystemHub() {
               </div>
             </div>
 
+            {/* Active Branch Facility Snapshot Strip */}
+            <div className="rounded-xl border border-ink-800 bg-ink-900/70 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-purple-500/15 text-purple-300 ring-1 ring-purple-500/30">
+                    <Building2 className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-[10px] uppercase tracking-widest text-purple-300">
+                        Active Nexus Scope
+                      </span>
+                      <span className="rounded bg-purple-500/20 px-2 py-0.5 font-mono text-[10px] font-bold text-purple-200">
+                        {branchFilter === "All"
+                          ? `All Branches (${branches.length})`
+                          : branchFilter}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 text-xs text-ink-300">
+                      {activeBranchObj
+                        ? `${activeBranchObj.name} · ${activeBranchObj.courts?.length || 1} Court(s) · Gym Capacity: ${activeBranchObj.gymCapacity ?? 30} athletes · Physio Rooms: ${activeBranchObj.physioRoomsCount ?? 2} · POS Register: ${activeBranchObj.posRegisterName || "Main Kiosk #1"}`
+                        : "Create or configure branches in Nexus Branches to customize courts, gym capacity, physio rooms, and POS registers."}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button variant="ghost" onClick={openCreateBranchModal}>
+                    + New Nexus Branch
+                  </Button>
+                  <Button onClick={() => setActiveModule("branches")}>
+                    Configure Nexus Branches →
+                  </Button>
+                </div>
+              </div>
+            </div>
+
             {/* 4 Module Cards */}
-            <div className="grid gap-5 md:grid-cols-2">
+            <div className="grid min-w-0 gap-5 md:grid-cols-2">
               {/* 1. Court & Facility Reservation Module */}
-              <div className="flex flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-5 transition-all hover:border-court-500/50">
+              <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-5 transition-all hover:border-court-500/50">
                 <div className="space-y-4">
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="flex items-center gap-3">
-                      <div className="grid h-11 w-11 place-items-center rounded-lg bg-court-500/15 text-court-400 ring-1 ring-court-500/30">
+                      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-court-500/15 text-court-400 ring-1 ring-court-500/30">
                         <Calendar className="h-5 w-5" />
                       </div>
                       <div>
                         <span className="font-mono text-[10px] uppercase tracking-widest text-court-400">
-                          Module 01 · Facility Operations
+                          Vescio Nexus · Module 01
                         </span>
                         <h3 className="font-display text-lg text-ink-100">
-                          Court & Facility Reservation Module
+                          Court &amp; Facility Reservation Module
                         </h3>
                       </div>
                     </div>
@@ -1573,9 +1567,9 @@ function UpErpEcosystemHub() {
                   </div>
 
                   <p className="text-xs text-ink-300 leading-relaxed">
-                    External and internal court booking calendar supporting Full Court, Half Court A
-                    (HCA), and Half Court B (HCB) slots alongside Academy practices with real-time
-                    conflict detection, recurring weekly rentals, and hourly rate billing.
+                    Daily, Weekly, and Monthly 15-minute drag-to-book calendar (HCA, HCB, or Full
+                    Court), snapshot-protected branch Rates Setup, Walk-in &amp; Continuous
+                    recurring bookings, Off Days closures, and direct Financial Ledger Cash-In.
                   </p>
 
                   <div className="grid grid-cols-3 gap-2 rounded-lg border border-ink-800 bg-ink-950/70 p-3 font-mono text-xs">
@@ -1600,17 +1594,17 @@ function UpErpEcosystemHub() {
                   </div>
                 </div>
 
-                <div className="mt-5 flex items-center justify-between border-t border-ink-800 pt-4">
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-ink-800 pt-4">
                   <span className="font-mono text-[11px] text-ink-400">
-                    Synced with {branches.reduce((acc, b) => acc + (b.courts?.length || 0), 0)}{" "}
+                    Synced with {branches.reduce((acc, b) => acc + (b.courts?.length || 1), 0)}{" "}
                     branch courts
                   </span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Button
                       variant="ghost"
                       onClick={() => {
                         setActiveModule("courts");
-                        openNewReservationModal();
+                        setCourtNewBookingTrigger((n) => n + 1);
                       }}
                     >
                       + New Booking
@@ -1623,27 +1617,29 @@ function UpErpEcosystemHub() {
               </div>
 
               {/* 2. Gym & Strength Module */}
-              <div className="flex flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-5 transition-all hover:border-sky-500/50">
+              <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-5 transition-all hover:border-sky-500/50">
                 <div className="space-y-4">
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="flex items-center gap-3">
-                      <div className="grid h-11 w-11 place-items-center rounded-lg bg-sky-500/15 text-sky-400 ring-1 ring-sky-500/30">
+                      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-sky-500/15 text-sky-400 ring-1 ring-sky-500/30">
                         <Dumbbell className="h-5 w-5" />
                       </div>
                       <div>
                         <span className="font-mono text-[10px] uppercase tracking-widest text-sky-400">
-                          Module 02 · Athletic Performance
+                          Vescio Nexus · Module 02
                         </span>
-                        <h3 className="font-display text-lg text-ink-100">Gym & Strength Module</h3>
+                        <h3 className="font-display text-lg text-ink-100">
+                          Gym &amp; Strength Module
+                        </h3>
                       </div>
                     </div>
-                    <Chip tone="info">S&C + Memberships</Chip>
+                    <Chip tone="info">S&amp;C + Memberships</Chip>
                   </div>
 
                   <p className="text-xs text-ink-300 leading-relaxed">
-                    Manage gym memberships, Strength & Conditioning session packs, daily athlete
-                    check-ins, and structured workout logs (sets, reps, load kg, RPE & PRs) for both
-                    Academy players and external gym members.
+                    Manage gym memberships, Strength &amp; Conditioning session packs, daily athlete
+                    check-ins, and structured workout logs (sets, reps, load kg, RPE &amp; PRs) for
+                    both Academy players and external gym members.
                   </p>
 
                   <div className="grid grid-cols-3 gap-2 rounded-lg border border-ink-800 bg-ink-950/70 p-3 font-mono text-xs">
@@ -1668,39 +1664,41 @@ function UpErpEcosystemHub() {
                   </div>
                 </div>
 
-                <div className="mt-5 flex items-center justify-between border-t border-ink-800 pt-4">
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-ink-800 pt-4">
                   <span className="font-mono text-[11px] text-ink-400">
-                    Supports Academy Players & External Members
+                    Branch Gym Cap: {activeBranchObj?.gymCapacity ?? 30} athletes
                   </span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Button
                       variant="ghost"
                       onClick={() => {
                         setActiveModule("gym");
-                        setGymModalOpen(true);
+                        openEnrollGymModal();
                       }}
                     >
                       + Enroll Member
                     </Button>
-                    <Button onClick={() => setActiveModule("gym")}>Open Gym & Strength →</Button>
+                    <Button onClick={() => setActiveModule("gym")}>
+                      Open Gym &amp; Strength →
+                    </Button>
                   </div>
                 </div>
               </div>
 
               {/* 3. Physiotherapy & Medical Module */}
-              <div className="flex flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-5 transition-all hover:border-rose-500/50">
+              <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-5 transition-all hover:border-rose-500/50">
                 <div className="space-y-4">
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="flex items-center gap-3">
-                      <div className="grid h-11 w-11 place-items-center rounded-lg bg-rose-500/15 text-rose-400 ring-1 ring-rose-500/30">
+                      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-rose-500/15 text-rose-400 ring-1 ring-rose-500/30">
                         <HeartPulse className="h-5 w-5" />
                       </div>
                       <div>
                         <span className="font-mono text-[10px] uppercase tracking-widest text-rose-400">
-                          Module 03 · Sports Medicine
+                          Vescio Nexus · Module 03
                         </span>
                         <h3 className="font-display text-lg text-ink-100">
-                          Physiotherapy & Medical Module
+                          Physiotherapy &amp; Medical Module
                         </h3>
                       </div>
                     </div>
@@ -1735,16 +1733,17 @@ function UpErpEcosystemHub() {
                   </div>
                 </div>
 
-                <div className="mt-5 flex items-center justify-between border-t border-ink-800 pt-4">
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-ink-800 pt-4">
                   <span className="font-mono text-[11px] text-ink-400">
-                    Two-way status sync with Academy Players
+                    Clinic Rooms: {activeBranchObj?.physioRoomsCount ?? 2} ·{" "}
+                    {activeBranchObj?.leadPhysiotherapist || "Dr. Rami Khoury (PT)"}
                   </span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Button
                       variant="ghost"
                       onClick={() => {
                         setActiveModule("physio");
-                        setPhysioIntakeOpen(true);
+                        openPhysioIntakeModal();
                       }}
                     >
                       + Injury Intake
@@ -1755,16 +1754,16 @@ function UpErpEcosystemHub() {
               </div>
 
               {/* 4. Kiosk POS (Point of Sale) */}
-              <div className="flex flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-5 transition-all hover:border-amber-500/50">
+              <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-5 transition-all hover:border-amber-500/50">
                 <div className="space-y-4">
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="flex items-center gap-3">
-                      <div className="grid h-11 w-11 place-items-center rounded-lg bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/30">
+                      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/30">
                         <ShoppingCart className="h-5 w-5" />
                       </div>
                       <div>
                         <span className="font-mono text-[10px] uppercase tracking-widest text-amber-400">
-                          Module 04 · On-Site Retail & Kiosk
+                          Vescio Nexus · Module 04
                         </span>
                         <h3 className="font-display text-lg text-ink-100">
                           Kiosk POS (Point of Sale)
@@ -1776,7 +1775,7 @@ function UpErpEcosystemHub() {
 
                   <p className="text-xs text-ink-300 leading-relaxed">
                     Fast touch-friendly POS interface for on-site sales (water, sports drinks,
-                    academy uniforms synced with inventory, court walk-in fees, snacks & tape).
+                    academy uniforms synced with inventory, court walk-in fees, snacks &amp; tape).
                     Supports Cash, Card, or Charge to Player/Member Account with daily sales
                     summary.
                   </p>
@@ -1803,11 +1802,11 @@ function UpErpEcosystemHub() {
                   </div>
                 </div>
 
-                <div className="mt-5 flex items-center justify-between border-t border-ink-800 pt-4">
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-ink-800 pt-4">
                   <span className="font-mono text-[11px] text-ink-400">
-                    {unifiedPosCatalog.length} products & merch items ready
+                    {unifiedPosCatalog.length} products &amp; merch items ready
                   </span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Button onClick={() => setActiveModule("pos")}>
                       Launch Kiosk POS Terminal →
                     </Button>
@@ -1819,272 +1818,249 @@ function UpErpEcosystemHub() {
         )}
 
         {/* ================================================================= */}
-        {/* VIEW 1: COURT & FACILITY RESERVATION MODULE                       */}
+        {/* VIEW 0.5: NEXUS BRANCHES MULTI-BRANCH MANAGEMENT                  */}
         {/* ================================================================= */}
-        {activeModule === "courts" && (
-          <div className="space-y-6">
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-ink-800 bg-ink-900/90 p-4">
-              <div>
-                <div className="font-mono text-[10px] uppercase tracking-widest text-court-400">
-                  UP ERP · Module 01
+        {activeModule === "branches" && (
+          <div className="min-w-0 max-w-full space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-purple-500/30 bg-ink-900/90 p-5">
+              <div className="min-w-0 max-w-2xl">
+                <div className="font-mono text-[10px] uppercase tracking-widest text-purple-300">
+                  Vescio Nexus · Multi-Branch Facility Setup
                 </div>
-                <h2 className="font-display text-xl text-ink-100">
-                  Court & Facility Reservation Calendar
+                <h2 className="mt-0.5 font-display text-xl text-ink-100">
+                  Nexus Branches &amp; Multi-Vertical Facility Configuration
                 </h2>
-                <p className="text-xs text-ink-400">
-                  Supports Full Court, Half Court - HCA, and Half Court - HCB slots alongside
-                  Academy practices with automatic conflict prevention.
+                <p className="mt-1 text-xs text-ink-300 leading-relaxed">
+                  Create, edit, and switch between multiple facility branches. Each branch maintains
+                  its own courts (with Full Court and Half-Court HCA/HCB hourly rates), Gym &amp;
+                  S&amp;C athlete capacity, Physiotherapy clinic rooms, and Kiosk POS register.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2.5">
-                <div className="flex items-center gap-2 rounded-md bg-ink-950 px-3 py-1.5 ring-1 ring-ink-800">
-                  <Calendar className="h-3.5 w-3.5 text-court-400" />
-                  <span className="font-mono text-[10px] text-ink-400">Schedule Date:</span>
-                  <input
-                    type="date"
-                    value={selectedCourtDate}
-                    onChange={(e) => setSelectedCourtDate(e.target.value)}
-                    className="bg-transparent font-mono text-xs text-ink-100 focus:outline-none"
-                  />
-                </div>
-                <Button onClick={() => openNewReservationModal()}>+ New Court Reservation</Button>
+                <Button onClick={openCreateBranchModal}>+ Create Nexus Branch</Button>
               </div>
             </div>
 
-            {/* Unified Court Occupancy Board (Academy Sessions + UP ERP Reservations) */}
-            <Panel
-              title={`Unified Court Occupancy Matrix · ${selectedCourtDate}`}
-              meta={`${unifiedCourtSlotsForDate.length} scheduled slot(s) across Academy & External Rentals`}
-            >
-              {unifiedCourtSlotsForDate.length === 0 ? (
+            {branches.length === 0 ? (
+              <Panel title="Nexus Branches Directory" meta="0 configured branches">
                 <EmptyState
-                  title={`No sessions or external rentals booked on ${selectedCourtDate}`}
-                  hint="All Full Court, HCA, and HCB slots are currently open for booking."
+                  title="No Nexus Branches configured yet"
+                  hint="Click '+ Create Nexus Branch' to configure your first multi-vertical facility branch with courts, gym capacity, physio rooms, and POS register."
+                  action={<Button onClick={openCreateBranchModal}>+ Create First Branch</Button>}
                 />
-              ) : (
-                <Table>
-                  <thead>
-                    <tr>
-                      <Th>Time Slot</Th>
-                      <Th>Source</Th>
-                      <Th>Client / Team</Th>
-                      <Th>Branch & Court</Th>
-                      <Th>Allocation (Full / HCA / HCB)</Th>
-                      <Th>Rental / Billing</Th>
-                      <Th>Status</Th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {unifiedCourtSlotsForDate.map((slot) => (
-                      <tr key={`${slot.source}-${slot.id}`} className="border-t border-ink-800/70">
-                        <Td>
-                          <span className="font-mono text-xs font-semibold text-ink-100">
-                            {slot.startTime}
-                            {slot.endTime ? ` – ${slot.endTime}` : ""}
-                          </span>
-                        </Td>
-                        <Td>
-                          <Chip tone={slot.source === "Academy Session" ? "info" : "court"}>
-                            {slot.source}
-                          </Chip>
-                        </Td>
-                        <Td>
-                          <div className="font-medium text-ink-100">{slot.title}</div>
-                          <div className="font-mono text-[10px] text-ink-400">
-                            {slot.clientOrTeam}
-                          </div>
-                        </Td>
-                        <Td>
-                          <div className="text-xs text-ink-200">{slot.court}</div>
-                          <div className="font-mono text-[10px] text-ink-400">{slot.branch}</div>
-                        </Td>
-                        <Td>
-                          <span
-                            className={`inline-flex items-center rounded px-2 py-0.5 font-mono text-[10px] font-semibold ring-1 ${
-                              slot.allocation === "Full Court"
-                                ? "bg-court-500/15 text-court-300 ring-court-500/30"
-                                : slot.allocation === "Half Court - HCA"
-                                  ? "bg-sky-500/15 text-sky-300 ring-sky-500/30"
-                                  : "bg-purple-500/15 text-purple-300 ring-purple-500/30"
-                            }`}
-                          >
-                            {slot.allocation}
-                          </span>
-                        </Td>
-                        <Td>
-                          <span className="font-mono text-xs text-emerald-400">
-                            {slot.feeLabel}
-                          </span>
-                        </Td>
-                        <Td>
-                          <Chip
-                            tone={
-                              slot.status === "Paid" || slot.status === "Completed"
-                                ? "ok"
-                                : slot.status === "Pending"
-                                  ? "warn"
-                                  : "neutral"
-                            }
-                          >
-                            {slot.status}
-                          </Chip>
-                        </Td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
-              )}
-            </Panel>
+              </Panel>
+            ) : (
+              <div className="grid min-w-0 gap-5 md:grid-cols-2">
+                {branches.map((b) => {
+                  const isSelected =
+                    branchFilter !== "All" &&
+                    (b.name || "").toLowerCase() === branchFilter.toLowerCase();
+                  const branchCourts = b.courts || [];
+                  const branchResCount = reservations.filter(
+                    (r) =>
+                      r.status !== "Cancelled" &&
+                      (r.branch || "").toLowerCase() === (b.name || "").toLowerCase(),
+                  ).length;
+                  const branchGymCount = gymMembers.filter(
+                    (m) =>
+                      m.status === "Active" &&
+                      (m.branch || "").toLowerCase() === (b.name || "").toLowerCase(),
+                  ).length;
+                  const branchPhysioCount = physioRecords.filter(
+                    (p) => (p.branch || "").toLowerCase() === (b.name || "").toLowerCase(),
+                  ).length;
+                  const branchPosSales = posTransactions
+                    .filter(
+                      (t) =>
+                        t.status === "Completed" &&
+                        (t.branch || "").toLowerCase() === (b.name || "").toLowerCase(),
+                    )
+                    .reduce((sum, t) => sum + (Number(t.total) || 0), 0);
 
-            {/* Full Court Reservations Ledger & Bookings List */}
-            <Panel
-              title="UP ERP Court & Facility Reservations Directory"
-              meta={`${filteredReservations.length} total reservation record(s)`}
-            >
-              {filteredReservations.length === 0 ? (
-                <EmptyState
-                  title="No UP ERP court reservations recorded yet"
-                  hint="Click '+ New Court Reservation' to book Full Court, HCA, or HCB slots for external clients or academy players."
-                />
-              ) : (
-                <Table>
-                  <thead>
-                    <tr>
-                      <Th>Date & Time</Th>
-                      <Th>Client Details</Th>
-                      <Th>Branch · Court · Allocation</Th>
-                      <Th>Rate & Total</Th>
-                      <Th>Payment Status</Th>
-                      <Th className="text-right">Actions</Th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredReservations.map((r) => {
-                      const balanceDue = Math.max(
-                        0,
-                        (Number(r.totalAmount) || 0) - (Number(r.paidAmount) || 0),
-                      );
-                      return (
-                        <tr key={r.id} className="border-t border-ink-800/70">
-                          <Td>
-                            <div className="font-mono text-xs font-semibold text-ink-100">
-                              {r.date}
+                  return (
+                    <div
+                      key={b.id}
+                      className={`flex min-w-0 flex-col justify-between rounded-xl border p-5 transition-all ${
+                        isSelected
+                          ? "border-emerald-500/60 bg-emerald-950/15 ring-1 ring-emerald-500/30"
+                          : "border-ink-800 bg-ink-900/90 hover:border-purple-500/40"
+                      }`}
+                    >
+                      <div className="space-y-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <div className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-purple-500/15 text-purple-300 ring-1 ring-purple-500/30">
+                              <Building2 className="h-5 w-5" />
                             </div>
-                            <div className="font-mono text-[11px] text-ink-400">
-                              {r.startTime} – {r.endTime} ({r.durationHours}h)
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h3 className="font-display text-lg text-ink-100 truncate">
+                                  {b.name}
+                                </h3>
+                                {isSelected && <Chip tone="ok">Active Filter</Chip>}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2 font-mono text-[11px] text-ink-400">
+                                <span className="inline-flex items-center gap-1">
+                                  <MapPin className="h-3 w-3 text-purple-400" />
+                                  {b.city || "Beirut"}
+                                  {b.address ? ` · ${b.address}` : ""}
+                                </span>
+                                <span>· Mgr: {b.manager || "Unassigned"}</span>
+                              </div>
                             </div>
-                            {r.isRecurring && (
-                              <span className="mt-0.5 inline-block rounded bg-ink-800 px-1.5 py-0.5 font-mono text-[9px] text-court-300">
-                                Recurring ({r.recurringWeeks} wks)
-                              </span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => openEditBranchModal(b)}
+                              className="inline-flex items-center gap-1 rounded-md bg-ink-850 px-2.5 py-1.5 font-mono text-xs text-ink-200 ring-1 ring-ink-700 hover:bg-ink-800"
+                            >
+                              <Edit3 className="h-3.5 w-3.5 text-court-400" />
+                              <span>Edit Setup</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* 4 Facility Verticals Configuration Grid */}
+                        <div className="grid gap-2.5 sm:grid-cols-2">
+                          {/* Courts Box */}
+                          <div className="rounded-lg border border-ink-800 bg-ink-950/70 p-3 space-y-1.5">
+                            <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-wider text-court-400">
+                              <span>1. Courts ({branchCourts.length})</span>
+                              <span>{branchResCount} active bookings</span>
+                            </div>
+                            {branchCourts.length === 0 ? (
+                              <div className="font-mono text-xs text-ink-400">
+                                No courts configured
+                              </div>
+                            ) : (
+                              <div className="space-y-1">
+                                {branchCourts.map((c, idx) => (
+                                  <div
+                                    key={c.id || idx}
+                                    className="flex flex-wrap items-center justify-between gap-1 font-mono text-xs text-ink-200"
+                                  >
+                                    <span className="font-semibold">{c.name}</span>
+                                    <span className="text-[10px] text-ink-400">
+                                      Full: {money(c.fullCourtHourlyRate ?? 60)}/h · HCA/HCB:{" "}
+                                      {money(c.halfCourtHourlyRate ?? 35)}/h
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
                             )}
-                          </Td>
-                          <Td>
-                            <div className="font-medium text-ink-100">{r.clientName}</div>
+                          </div>
+
+                          {/* Gym Capacity Box */}
+                          <div className="rounded-lg border border-ink-800 bg-ink-950/70 p-3 space-y-1.5">
+                            <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-wider text-sky-400">
+                              <span>2. Gym &amp; S&amp;C Floor</span>
+                              <span>
+                                {branchGymCount}/{b.gymCapacity ?? 30} enrolled
+                              </span>
+                            </div>
+                            <div className="font-mono text-xs font-semibold text-ink-100">
+                              Capacity: {b.gymCapacity ?? 30} Athletes · Default{" "}
+                              {money(b.gymDefaultMonthlyFee ?? 65)}/mo
+                            </div>
+                            <div className="truncate font-mono text-[10px] text-ink-400">
+                              {b.gymEquipmentNotes || "Full S&C Rack & Turf Zone"}
+                            </div>
+                          </div>
+
+                          {/* Physio Clinic Box */}
+                          <div className="rounded-lg border border-ink-800 bg-ink-950/70 p-3 space-y-1.5">
+                            <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-wider text-rose-400">
+                              <span>3. Physiotherapy Clinic</span>
+                              <span>{b.physioClinicStatus || "Open"}</span>
+                            </div>
+                            <div className="font-mono text-xs font-semibold text-ink-100">
+                              {b.physioRoomsCount ?? 2} Treatment Room(s) · {branchPhysioCount}{" "}
+                              case(s)
+                            </div>
+                            <div className="truncate font-mono text-[10px] text-ink-400">
+                              Lead PT: {b.leadPhysiotherapist || "Dr. Rami Khoury (PT)"}
+                            </div>
+                          </div>
+
+                          {/* Kiosk POS Register Box */}
+                          <div className="rounded-lg border border-ink-800 bg-ink-950/70 p-3 space-y-1.5">
+                            <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-wider text-amber-400">
+                              <span>4. Kiosk POS Register</span>
+                              <span>{b.posStatus || "Open"}</span>
+                            </div>
+                            <div className="font-mono text-xs font-semibold text-ink-100 truncate">
+                              {b.posRegisterName || `${b.name} Kiosk Terminal #1`}
+                            </div>
                             <div className="font-mono text-[10px] text-ink-400">
-                              {r.clientType} {r.phone ? `· ${r.phone}` : ""}
+                              Drawer Float: {money(b.posStartingFloat ?? 200)} · Sales:{" "}
+                              {money(branchPosSales)}
                             </div>
-                          </Td>
-                          <Td>
-                            <div className="text-xs font-medium text-ink-200">
-                              {r.branch} · {r.court}
-                            </div>
-                            <span
-                              className={`mt-1 inline-flex items-center rounded px-2 py-0.5 font-mono text-[10px] font-semibold ring-1 ${
-                                r.courtAllocation === "Full Court"
-                                  ? "bg-court-500/15 text-court-300 ring-court-500/30"
-                                  : r.courtAllocation === "Half Court - HCA"
-                                    ? "bg-sky-500/15 text-sky-300 ring-sky-500/30"
-                                    : "bg-purple-500/15 text-purple-300 ring-purple-500/30"
-                              }`}
-                            >
-                              {r.courtAllocation}
-                            </span>
-                          </Td>
-                          <Td>
-                            <div className="font-mono text-xs font-semibold text-emerald-400">
-                              {money(r.totalAmount)}
-                            </div>
-                            <div className="font-mono text-[10px] text-ink-400">
-                              {money(r.hourlyRate)}/hr · Paid: {money(r.paidAmount)}
-                            </div>
-                          </Td>
-                          <Td>
-                            <Chip
-                              tone={
-                                r.paymentStatus === "Paid"
-                                  ? "ok"
-                                  : r.paymentStatus === "Pending" || r.paymentStatus === "Partial"
-                                    ? "warn"
-                                    : "info"
-                              }
-                            >
-                              {r.paymentStatus}
-                            </Chip>
-                          </Td>
-                          <Td className="text-right">
-                            <div className="inline-flex items-center gap-1.5">
-                              {balanceDue > 0 && r.status !== "Cancelled" && (
-                                <button
-                                  type="button"
-                                  onClick={() => void handleCollectReservationPayment(r)}
-                                  className="rounded bg-emerald-500/15 px-2.5 py-1 font-mono text-[10px] font-semibold text-emerald-300 ring-1 ring-emerald-500/30 hover:bg-emerald-500/25"
-                                >
-                                  Collect {money(balanceDue)}
-                                </button>
-                              )}
-                              {r.status !== "Cancelled" && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    void patchEntity("courtReservations", r.id, {
-                                      status: "Cancelled",
-                                    })
-                                  }
-                                  className="rounded bg-ink-850 px-2 py-1 font-mono text-[10px] text-ink-300 hover:bg-red-500/15 hover:text-red-300"
-                                >
-                                  Cancel
-                                </button>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => void deleteEntity("courtReservations", r.id)}
-                                className="rounded bg-ink-850 p-1 text-ink-400 hover:text-red-400"
-                                title="Delete reservation"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          </Td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </Table>
-              )}
-            </Panel>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-ink-800 pt-3">
+                        <span className="font-mono text-[10px] text-ink-400">
+                          Hours: {b.operatingHours || "08:00 - 22:30"}
+                        </span>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button
+                            variant={isSelected ? "ghost" : "primary"}
+                            onClick={() => {
+                              const nextBranch = isSelected ? "All" : b.name;
+                              setBranchFilter(nextBranch);
+                              toast.success(
+                                nextBranch === "All"
+                                  ? "Switched Vescio Nexus scope to All Branches."
+                                  : `Switched Vescio Nexus active branch to "${b.name}".`,
+                              );
+                            }}
+                          >
+                            {isSelected ? "Showing This Branch (Reset)" : `Switch to ${b.name} →`}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
+        )}
+
+        {/* ================================================================= */}
+        {/* VIEW 1: COURT & FACILITY RESERVATION MODULE                       */}
+        {/* ================================================================= */}
+        {activeModule === "courts" && (
+          <NexusCourtReservationsModule
+            branchFilter={branchFilter}
+            onChangeBranchFilter={setBranchFilter}
+            externalNewBookingTrigger={courtNewBookingTrigger}
+          />
         )}
 
         {/* ================================================================= */}
         {/* VIEW 2: GYM & STRENGTH MODULE                                     */}
         {/* ================================================================= */}
         {activeModule === "gym" && (
-          <div className="space-y-6">
+          <div className="min-w-0 max-w-full space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-ink-800 bg-ink-900/90 p-4">
-              <div>
+              <div className="min-w-0">
                 <div className="font-mono text-[10px] uppercase tracking-widest text-sky-400">
-                  UP ERP · Module 02
+                  Vescio Nexus · Module 02 ·{" "}
+                  {branchFilter === "All" ? "All Branches" : branchFilter}
                 </div>
                 <h2 className="font-display text-xl text-ink-100">
-                  Gym Memberships, Daily Check-Ins & Strength Logs
+                  Gym Memberships, Daily Check-Ins &amp; Strength Logs
                 </h2>
                 <p className="text-xs text-ink-400">
-                  Manage S&C packages, daily gym floor check-ins, and personal record / RPE training
-                  logs for Academy athletes and external gym members.
+                  Manage S&amp;C packages, daily gym floor check-ins, and personal record / RPE
+                  training logs for Academy athletes and external gym members.
                 </p>
               </div>
-              <Button onClick={() => setGymModalOpen(true)}>+ New Gym / S&C Membership</Button>
+              <Button onClick={openEnrollGymModal}>+ New Gym / S&amp;C Membership</Button>
             </div>
 
             <Panel
@@ -2097,104 +2073,110 @@ function UpErpEcosystemHub() {
                   hint="Click '+ New Gym / S&C Membership' to enroll an Academy Player or External Gym Member."
                 />
               ) : (
-                <Table>
-                  <thead>
-                    <tr>
-                      <Th>Member / Athlete</Th>
-                      <Th>Type & Branch</Th>
-                      <Th>Package & Access</Th>
-                      <Th>Check-Ins & Last Visit</Th>
-                      <Th>Workout Logs</Th>
-                      <Th>Status</Th>
-                      <Th className="text-right">Actions</Th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredGymMembers.map((m) => (
-                      <tr key={m.id} className="border-t border-ink-800/70">
-                        <Td>
-                          <div className="font-medium text-ink-100">{m.memberName}</div>
-                          <div className="font-mono text-[10px] text-ink-400">
-                            {m.phone || "No phone"} · Valid {m.startDate} → {m.expiryDate}
-                          </div>
-                        </Td>
-                        <Td>
-                          <Chip tone={m.memberType === "Academy Player" ? "court" : "info"}>
-                            {m.memberType}
-                          </Chip>
-                          <div className="mt-1 font-mono text-[10px] text-ink-400">{m.branch}</div>
-                        </Td>
-                        <Td>
-                          <div className="text-xs font-semibold text-ink-100">{m.packageType}</div>
-                          <div className="font-mono text-[10px] text-emerald-400">
-                            {money(m.monthlyFee)} ·{" "}
-                            {(m.totalSessionsIncluded ?? 0) >= 999
-                              ? "Unlimited Sessions"
-                              : `${m.sessionsRemaining ?? 0}/${m.totalSessionsIncluded ?? 10} sessions left`}
-                          </div>
-                        </Td>
-                        <Td>
-                          <div className="font-mono text-xs font-semibold text-ink-100">
-                            {m.totalCheckIns || 0} check-ins
-                          </div>
-                          <div className="font-mono text-[10px] text-ink-400">
-                            Last: {m.lastCheckInDate || "Never"}
-                          </div>
-                        </Td>
-                        <Td>
-                          <button
-                            type="button"
-                            onClick={() => setWorkoutModalMember(m)}
-                            className="inline-flex items-center gap-1.5 rounded bg-sky-500/15 px-2.5 py-1 font-mono text-[10px] font-semibold text-sky-300 ring-1 ring-sky-500/30 hover:bg-sky-500/25"
-                          >
-                            <Dumbbell className="h-3 w-3" />
-                            <span>{(m.workoutLogs || []).length} Workout Log(s)</span>
-                          </button>
-                        </Td>
-                        <Td>
-                          <Chip
-                            tone={
-                              m.status === "Active"
-                                ? "ok"
-                                : m.status === "Paused"
-                                  ? "warn"
-                                  : "danger"
-                            }
-                          >
-                            {m.status}
-                          </Chip>
-                        </Td>
-                        <Td className="text-right">
-                          <div className="inline-flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => void handleGymCheckIn(m)}
-                              className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-2.5 py-1 font-mono text-[10px] font-bold text-emerald-300 ring-1 ring-emerald-500/40 hover:bg-emerald-500/30"
-                            >
-                              <UserCheck className="h-3 w-3" />
-                              <span>Check In</span>
-                            </button>
+                <div className="w-full max-w-full overflow-x-auto">
+                  <Table>
+                    <thead>
+                      <tr>
+                        <Th>Member / Athlete</Th>
+                        <Th>Type &amp; Branch</Th>
+                        <Th>Package &amp; Access</Th>
+                        <Th>Check-Ins &amp; Last Visit</Th>
+                        <Th>Workout Logs</Th>
+                        <Th>Status</Th>
+                        <Th className="text-right">Actions</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredGymMembers.map((m) => (
+                        <tr key={m.id} className="border-t border-ink-800/70">
+                          <Td>
+                            <div className="font-medium text-ink-100">{m.memberName}</div>
+                            <div className="font-mono text-[10px] text-ink-400">
+                              {m.phone || "No phone"} · Valid {m.startDate} → {m.expiryDate}
+                            </div>
+                          </Td>
+                          <Td>
+                            <Chip tone={m.memberType === "Academy Player" ? "court" : "info"}>
+                              {m.memberType}
+                            </Chip>
+                            <div className="mt-1 font-mono text-[10px] text-ink-400">
+                              {m.branch}
+                            </div>
+                          </Td>
+                          <Td>
+                            <div className="text-xs font-semibold text-ink-100">
+                              {m.packageType}
+                            </div>
+                            <div className="font-mono text-[10px] text-emerald-400">
+                              {money(m.monthlyFee)} ·{" "}
+                              {(m.totalSessionsIncluded ?? 0) >= 999
+                                ? "Unlimited Sessions"
+                                : `${m.sessionsRemaining ?? 0}/${m.totalSessionsIncluded ?? 10} sessions left`}
+                            </div>
+                          </Td>
+                          <Td>
+                            <div className="font-mono text-xs font-semibold text-ink-100">
+                              {m.totalCheckIns || 0} check-ins
+                            </div>
+                            <div className="font-mono text-[10px] text-ink-400">
+                              Last: {m.lastCheckInDate || "Never"}
+                            </div>
+                          </Td>
+                          <Td>
                             <button
                               type="button"
                               onClick={() => setWorkoutModalMember(m)}
-                              className="rounded bg-ink-850 px-2 py-1 font-mono text-[10px] text-ink-200 ring-1 ring-ink-700 hover:bg-ink-800"
+                              className="inline-flex items-center gap-1.5 rounded bg-sky-500/15 px-2.5 py-1 font-mono text-[10px] font-semibold text-sky-300 ring-1 ring-sky-500/30 hover:bg-sky-500/25"
                             >
-                              + Log Workout
+                              <Dumbbell className="h-3 w-3" />
+                              <span>{(m.workoutLogs || []).length} Workout Log(s)</span>
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => void deleteEntity("gymMembers", m.id)}
-                              className="rounded bg-ink-850 p-1 text-ink-400 hover:text-red-400"
-                              title="Delete member"
+                          </Td>
+                          <Td>
+                            <Chip
+                              tone={
+                                m.status === "Active"
+                                  ? "ok"
+                                  : m.status === "Paused"
+                                    ? "warn"
+                                    : "danger"
+                              }
                             >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        </Td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </Table>
+                              {m.status}
+                            </Chip>
+                          </Td>
+                          <Td className="text-right">
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => void handleGymCheckIn(m)}
+                                className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-2.5 py-1 font-mono text-[10px] font-bold text-emerald-300 ring-1 ring-emerald-500/40 hover:bg-emerald-500/30"
+                              >
+                                <UserCheck className="h-3 w-3" />
+                                <span>Check In</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setWorkoutModalMember(m)}
+                                className="rounded bg-ink-850 px-2 py-1 font-mono text-[10px] text-ink-200 ring-1 ring-ink-700 hover:bg-ink-800"
+                              >
+                                + Log Workout
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void deleteEntity("gymMembers", m.id)}
+                                className="rounded bg-ink-850 p-1 text-ink-400 hover:text-red-400"
+                                title="Delete member"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                </div>
               )}
             </Panel>
           </div>
@@ -2204,23 +2186,22 @@ function UpErpEcosystemHub() {
         {/* VIEW 3: PHYSIOTHERAPY & MEDICAL MODULE                            */}
         {/* ================================================================= */}
         {activeModule === "physio" && (
-          <div className="space-y-6">
+          <div className="min-w-0 max-w-full space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-ink-800 bg-ink-900/90 p-4">
-              <div>
+              <div className="min-w-0">
                 <div className="font-mono text-[10px] uppercase tracking-widest text-rose-400">
-                  UP ERP · Module 03
+                  Vescio Nexus · Module 03 ·{" "}
+                  {branchFilter === "All" ? "All Branches" : branchFilter}
                 </div>
                 <h2 className="font-display text-xl text-ink-100">
-                  Physiotherapy, Injury Intake & Return-to-Play (RTP)
+                  Physiotherapy, Injury Intake &amp; Return-to-Play (RTP)
                 </h2>
                 <p className="text-xs text-ink-400">
                   Medical clearance statuses (Fit, Limited/Modified Training, Injured/Out) sync
                   automatically with Academy player profiles.
                 </p>
               </div>
-              <Button onClick={() => setPhysioIntakeOpen(true)}>
-                + New Injury Assessment Intake
-              </Button>
+              <Button onClick={openPhysioIntakeModal}>+ New Injury Assessment Intake</Button>
             </div>
 
             {/* Active Physiotherapy & RTP Clinical Cases */}
@@ -2234,124 +2215,127 @@ function UpErpEcosystemHub() {
                   hint="Click '+ New Injury Assessment Intake' to log an injury assessment, set Academy clearance status, and track Return-to-Play stages."
                 />
               ) : (
-                <Table>
-                  <thead>
-                    <tr>
-                      <Th>Patient / Athlete</Th>
-                      <Th>Injury & Diagnosis</Th>
-                      <Th>Academy Medical Status</Th>
-                      <Th>Return-to-Play (RTP) Stage</Th>
-                      <Th>Sessions</Th>
-                      <Th className="text-right">Clinical Actions</Th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredPhysioRecords.map((rec) => (
-                      <tr key={rec.id} className="border-t border-ink-800/70">
-                        <Td>
-                          <div className="font-medium text-ink-100">{rec.patientName}</div>
-                          <div className="font-mono text-[10px] text-ink-400">
-                            {rec.patientType} {rec.team ? `· ${rec.team}` : ""} · {rec.branch}
-                          </div>
-                        </Td>
-                        <Td>
-                          <div className="text-xs font-semibold text-ink-100">
-                            {rec.injuryArea} · <span className="text-rose-300">{rec.severity}</span>
-                          </div>
-                          <div className="text-xs text-ink-300">{rec.diagnosis}</div>
-                          {rec.restrictions && (
-                            <div className="mt-0.5 font-mono text-[10px] text-amber-300/90">
-                              Restriction: {rec.restrictions}
-                            </div>
-                          )}
-                        </Td>
-                        <Td>
-                          <select
-                            value={rec.medicalStatus}
-                            onChange={(e) =>
-                              void handleUpdatePhysioRtpAndStatus(
-                                rec,
-                                e.target.value as PlayerMedicalClearanceStatus,
-                                e.target.value === "Fit" ? 5 : rec.rtpStage,
-                              )
-                            }
-                            className={`rounded-md px-2.5 py-1 font-mono text-xs font-bold ring-1 focus:outline-none ${
-                              rec.medicalStatus === "Fit"
-                                ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30"
-                                : rec.medicalStatus === "Limited"
-                                  ? "bg-amber-500/15 text-amber-300 ring-amber-500/30"
-                                  : "bg-red-500/15 text-red-300 ring-red-500/30"
-                            }`}
-                          >
-                            <option value="Fit" className="bg-ink-900 text-emerald-300">
-                              Fit (Cleared)
-                            </option>
-                            <option value="Limited" className="bg-ink-900 text-amber-300">
-                              Limited / Modified Training
-                            </option>
-                            <option value="Injured" className="bg-ink-900 text-red-300">
-                              Injured / Out
-                            </option>
-                          </select>
-                        </Td>
-                        <Td>
-                          <div className="flex items-center gap-1.5">
-                            {[1, 2, 3, 4, 5].map((st) => (
-                              <button
-                                key={st}
-                                type="button"
-                                onClick={() =>
-                                  void handleUpdatePhysioRtpAndStatus(
-                                    rec,
-                                    st === 5 ? "Fit" : rec.medicalStatus,
-                                    st as 1 | 2 | 3 | 4 | 5,
-                                  )
-                                }
-                                className={`h-6 w-6 rounded font-mono text-[10px] font-bold transition-all ${
-                                  rec.rtpStage >= st
-                                    ? st === 5
-                                      ? "bg-emerald-500 text-ink-950"
-                                      : "bg-court-500 text-ink-950"
-                                    : "bg-ink-850 text-ink-400 hover:bg-ink-800"
-                                }`}
-                                title={RTP_STAGES[st - 1]?.title}
-                              >
-                                {st}
-                              </button>
-                            ))}
-                          </div>
-                          <div className="mt-1 font-mono text-[10px] text-ink-400">
-                            {RTP_STAGES[rec.rtpStage - 1]?.title}
-                          </div>
-                        </Td>
-                        <Td>
-                          <span className="font-mono text-xs text-ink-200">
-                            {(rec.treatmentSessions || []).length} session(s)
-                          </span>
-                        </Td>
-                        <Td className="text-right">
-                          <div className="inline-flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => setActivePhysioRecord(rec)}
-                              className="rounded bg-rose-500/15 px-2.5 py-1 font-mono text-[10px] font-semibold text-rose-300 ring-1 ring-rose-500/30 hover:bg-rose-500/25"
-                            >
-                              SOAP Notes & Sessions
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void deleteEntity("physioRecords", rec.id)}
-                              className="rounded bg-ink-850 p-1 text-ink-400 hover:text-red-400"
-                              title="Delete clinical record"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        </Td>
+                <div className="w-full max-w-full overflow-x-auto">
+                  <Table>
+                    <thead>
+                      <tr>
+                        <Th>Patient / Athlete</Th>
+                        <Th>Injury &amp; Diagnosis</Th>
+                        <Th>Academy Medical Status</Th>
+                        <Th>Return-to-Play (RTP) Stage</Th>
+                        <Th>Sessions</Th>
+                        <Th className="text-right">Clinical Actions</Th>
                       </tr>
-                    ))}
-                  </tbody>
-                </Table>
+                    </thead>
+                    <tbody>
+                      {filteredPhysioRecords.map((rec) => (
+                        <tr key={rec.id} className="border-t border-ink-800/70">
+                          <Td>
+                            <div className="font-medium text-ink-100">{rec.patientName}</div>
+                            <div className="font-mono text-[10px] text-ink-400">
+                              {rec.patientType} {rec.team ? `· ${rec.team}` : ""} · {rec.branch}
+                            </div>
+                          </Td>
+                          <Td>
+                            <div className="text-xs font-semibold text-ink-100">
+                              {rec.injuryArea} ·{" "}
+                              <span className="text-rose-300">{rec.severity}</span>
+                            </div>
+                            <div className="text-xs text-ink-300">{rec.diagnosis}</div>
+                            {rec.restrictions && (
+                              <div className="mt-0.5 font-mono text-[10px] text-amber-300/90">
+                                Restriction: {rec.restrictions}
+                              </div>
+                            )}
+                          </Td>
+                          <Td>
+                            <select
+                              value={rec.medicalStatus}
+                              onChange={(e) =>
+                                void handleUpdatePhysioRtpAndStatus(
+                                  rec,
+                                  e.target.value as PlayerMedicalClearanceStatus,
+                                  e.target.value === "Fit" ? 5 : rec.rtpStage,
+                                )
+                              }
+                              className={`rounded-md px-2.5 py-1 font-mono text-xs font-bold ring-1 focus:outline-none ${
+                                rec.medicalStatus === "Fit"
+                                  ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30"
+                                  : rec.medicalStatus === "Limited"
+                                    ? "bg-amber-500/15 text-amber-300 ring-amber-500/30"
+                                    : "bg-red-500/15 text-red-300 ring-red-500/30"
+                              }`}
+                            >
+                              <option value="Fit" className="bg-ink-900 text-emerald-300">
+                                Fit (Cleared)
+                              </option>
+                              <option value="Limited" className="bg-ink-900 text-amber-300">
+                                Limited / Modified Training
+                              </option>
+                              <option value="Injured" className="bg-ink-900 text-red-300">
+                                Injured / Out
+                              </option>
+                            </select>
+                          </Td>
+                          <Td>
+                            <div className="flex items-center gap-1.5">
+                              {[1, 2, 3, 4, 5].map((st) => (
+                                <button
+                                  key={st}
+                                  type="button"
+                                  onClick={() =>
+                                    void handleUpdatePhysioRtpAndStatus(
+                                      rec,
+                                      st === 5 ? "Fit" : rec.medicalStatus,
+                                      st as 1 | 2 | 3 | 4 | 5,
+                                    )
+                                  }
+                                  className={`h-6 w-6 rounded font-mono text-[10px] font-bold transition-all ${
+                                    rec.rtpStage >= st
+                                      ? st === 5
+                                        ? "bg-emerald-500 text-ink-950"
+                                        : "bg-court-500 text-ink-950"
+                                      : "bg-ink-850 text-ink-400 hover:bg-ink-800"
+                                  }`}
+                                  title={RTP_STAGES[st - 1]?.title}
+                                >
+                                  {st}
+                                </button>
+                              ))}
+                            </div>
+                            <div className="mt-1 font-mono text-[10px] text-ink-400">
+                              {RTP_STAGES[rec.rtpStage - 1]?.title}
+                            </div>
+                          </Td>
+                          <Td>
+                            <span className="font-mono text-xs text-ink-200">
+                              {(rec.treatmentSessions || []).length} session(s)
+                            </span>
+                          </Td>
+                          <Td className="text-right">
+                            <div className="inline-flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setActivePhysioRecord(rec)}
+                                className="rounded bg-rose-500/15 px-2.5 py-1 font-mono text-[10px] font-semibold text-rose-300 ring-1 ring-rose-500/30 hover:bg-rose-500/25"
+                              >
+                                SOAP Notes &amp; Sessions
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void deleteEntity("physioRecords", rec.id)}
+                                className="rounded bg-ink-850 p-1 text-ink-400 hover:text-red-400"
+                                title="Delete clinical record"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                </div>
               )}
             </Panel>
 
@@ -2366,77 +2350,86 @@ function UpErpEcosystemHub() {
                   hint="Players registered in Vescio Vector Academy appear here automatically for instant medical clearance syncing."
                 />
               ) : (
-                <Table>
-                  <thead>
-                    <tr>
-                      <Th>Player Name</Th>
-                      <Th>Category & Team(s)</Th>
-                      <Th>Branch</Th>
-                      <Th>Medical Notes</Th>
-                      <Th>Synced Medical Clearance</Th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {players.slice(0, 25).map((p) => {
-                      const medStatus: PlayerMedicalClearanceStatus = p.medicalStatus || "Fit";
-                      return (
-                        <tr key={p.id} className="border-t border-ink-800/70">
-                          <Td>
-                            <div className="font-medium text-ink-100">{p.name}</div>
-                          </Td>
-                          <Td>
-                            <span className="font-mono text-xs text-ink-300">
-                              {p.category} · {(p.teams || []).join(", ") || "Unassigned"}
-                            </span>
-                          </Td>
-                          <Td>
-                            <span className="font-mono text-xs text-ink-400">{p.branch}</span>
-                          </Td>
-                          <Td>
-                            <span className="text-xs text-ink-300">
-                              {p.medicalNotes || "No restrictions recorded"}
-                            </span>
-                          </Td>
-                          <Td>
-                            <div className="inline-flex items-center gap-1.5">
-                              {(["Fit", "Limited", "Injured"] as const).map((statusOpt) => (
-                                <button
-                                  key={statusOpt}
-                                  type="button"
-                                  onClick={() => {
-                                    void syncPlayerMedicalStatusToAcademy(
-                                      p.id,
-                                      statusOpt,
-                                      statusOpt === "Fit" ? 5 : statusOpt === "Limited" ? 3 : 1,
-                                    );
-                                    toast.success(
-                                      `Synced ${p.name}'s Academy medical status to "${statusOpt}".`,
-                                    );
-                                  }}
-                                  className={`rounded px-2.5 py-1 font-mono text-[10px] font-bold transition-all ${
-                                    medStatus === statusOpt
-                                      ? statusOpt === "Fit"
-                                        ? "bg-emerald-500 text-ink-950"
+                <div className="w-full max-w-full overflow-x-auto">
+                  <Table>
+                    <thead>
+                      <tr>
+                        <Th>Player Name</Th>
+                        <Th>Category &amp; Team(s)</Th>
+                        <Th>Branch</Th>
+                        <Th>Medical Notes</Th>
+                        <Th>Synced Medical Clearance</Th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {players
+                        .filter(
+                          (p) =>
+                            branchFilter === "All" ||
+                            (p.branch || "").toLowerCase() === branchFilter.toLowerCase(),
+                        )
+                        .slice(0, 25)
+                        .map((p) => {
+                          const medStatus: PlayerMedicalClearanceStatus = p.medicalStatus || "Fit";
+                          return (
+                            <tr key={p.id} className="border-t border-ink-800/70">
+                              <Td>
+                                <div className="font-medium text-ink-100">{p.name}</div>
+                              </Td>
+                              <Td>
+                                <span className="font-mono text-xs text-ink-300">
+                                  {p.category} · {(p.teams || []).join(", ") || "Unassigned"}
+                                </span>
+                              </Td>
+                              <Td>
+                                <span className="font-mono text-xs text-ink-400">{p.branch}</span>
+                              </Td>
+                              <Td>
+                                <span className="text-xs text-ink-300">
+                                  {p.medicalNotes || "No restrictions recorded"}
+                                </span>
+                              </Td>
+                              <Td>
+                                <div className="inline-flex items-center gap-1.5">
+                                  {(["Fit", "Limited", "Injured"] as const).map((statusOpt) => (
+                                    <button
+                                      key={statusOpt}
+                                      type="button"
+                                      onClick={() => {
+                                        void syncPlayerMedicalStatusToAcademy(
+                                          p.id,
+                                          statusOpt,
+                                          statusOpt === "Fit" ? 5 : statusOpt === "Limited" ? 3 : 1,
+                                        );
+                                        toast.success(
+                                          `Synced ${p.name}'s Academy medical status to "${statusOpt}".`,
+                                        );
+                                      }}
+                                      className={`rounded px-2.5 py-1 font-mono text-[10px] font-bold transition-all ${
+                                        medStatus === statusOpt
+                                          ? statusOpt === "Fit"
+                                            ? "bg-emerald-500 text-ink-950"
+                                            : statusOpt === "Limited"
+                                              ? "bg-amber-400 text-ink-950"
+                                              : "bg-red-500 text-white"
+                                          : "bg-ink-850 text-ink-400 hover:bg-ink-800"
+                                      }`}
+                                    >
+                                      {statusOpt === "Fit"
+                                        ? "Fit"
                                         : statusOpt === "Limited"
-                                          ? "bg-amber-400 text-ink-950"
-                                          : "bg-red-500 text-white"
-                                      : "bg-ink-850 text-ink-400 hover:bg-ink-800"
-                                  }`}
-                                >
-                                  {statusOpt === "Fit"
-                                    ? "Fit"
-                                    : statusOpt === "Limited"
-                                      ? "Limited"
-                                      : "Injured / Out"}
-                                </button>
-                              ))}
-                            </div>
-                          </Td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </Table>
+                                          ? "Limited"
+                                          : "Injured / Out"}
+                                    </button>
+                                  ))}
+                                </div>
+                              </Td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </Table>
+                </div>
               )}
             </Panel>
           </div>
@@ -2446,24 +2439,26 @@ function UpErpEcosystemHub() {
         {/* VIEW 4: KIOSK POS (POINT OF SALE)                                 */}
         {/* ================================================================= */}
         {activeModule === "pos" && (
-          <div className="space-y-6">
+          <div className="min-w-0 max-w-full space-y-6">
             {/* POS Top Bar & Daily Register Summary Strip */}
             <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-ink-800 bg-ink-900/90 p-4">
-              <div>
+              <div className="min-w-0">
                 <div className="font-mono text-[10px] uppercase tracking-widest text-amber-400">
-                  UP ERP · Module 04 · Touch POS Terminal
+                  Vescio Nexus · Module 04 ·{" "}
+                  {activeBranchObj?.posRegisterName || "Touch POS Terminal"} (
+                  {branchFilter === "All" ? "All Branches" : branchFilter})
                 </div>
                 <h2 className="font-display text-xl text-ink-100">
                   On-Site Kiosk Point of Sale (POS)
                 </h2>
                 <p className="text-xs text-ink-400">
-                  Instant checkout for drinks, snacks, academy uniforms, court walk-in passes &
+                  Instant checkout for drinks, snacks, academy uniforms, court walk-in passes &amp;
                   physio tape.
                 </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-4 rounded-lg border border-ink-800 bg-ink-950 px-4 py-2 font-mono text-xs">
+                <div className="flex flex-wrap items-center gap-4 rounded-lg border border-ink-800 bg-ink-950 px-4 py-2 font-mono text-xs">
                   <div>
                     <span className="text-[10px] text-ink-400 block">Today Cash</span>
                     <span className="font-bold text-emerald-400">
@@ -2486,16 +2481,25 @@ function UpErpEcosystemHub() {
                   </div>
                 </div>
 
-                <Button variant="ghost" onClick={() => setPosCatalogModalOpen(true)}>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setNewCatalogItem((prev) => ({
+                      ...prev,
+                      branch: branchFilter !== "All" ? branchFilter : "All",
+                    }));
+                    setPosCatalogModalOpen(true);
+                  }}
+                >
                   + Add POS Product
                 </Button>
               </div>
             </div>
 
             {/* POS Main Touch Interface: Left Product Grid + Right Cart & Checkout */}
-            <div className="grid gap-6 lg:grid-cols-[1fr_400px]">
+            <div className="grid min-w-0 max-w-full gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
               {/* Left: Product Grid */}
-              <div className="space-y-4">
+              <div className="min-w-0 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex flex-wrap items-center gap-1.5">
                     {POS_CATEGORIES.map((cat) => (
@@ -2514,7 +2518,7 @@ function UpErpEcosystemHub() {
                     ))}
                   </div>
 
-                  <div className="relative min-w-[220px]">
+                  <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
                     <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-ink-400" />
                     <input
                       type="text"
@@ -2526,7 +2530,7 @@ function UpErpEcosystemHub() {
                   </div>
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                   {filteredPosCatalog.map((item) => {
                     const inCartQty =
                       posCart.find((line) => line.itemId === item.id)?.quantity || 0;
@@ -2535,19 +2539,19 @@ function UpErpEcosystemHub() {
                         key={item.id}
                         type="button"
                         onClick={() => addToPosCart(item)}
-                        className={`group relative flex flex-col justify-between rounded-xl border p-4 text-left transition-all cursor-pointer ${
+                        className={`group relative flex min-w-0 flex-col justify-between rounded-xl border p-4 text-left transition-all cursor-pointer ${
                           inCartQty > 0
                             ? "border-amber-400 bg-amber-500/10 ring-1 ring-amber-400/40"
                             : "border-ink-800 bg-ink-900/90 hover:border-amber-500/40 hover:bg-ink-850"
                         }`}
                       >
-                        <div>
+                        <div className="min-w-0">
                           <div className="flex items-start justify-between gap-2">
-                            <span className="font-mono text-[10px] uppercase tracking-wider text-ink-400">
+                            <span className="truncate font-mono text-[10px] uppercase tracking-wider text-ink-400">
                               {item.category}
                             </span>
                             {inCartQty > 0 && (
-                              <span className="rounded-full bg-amber-400 px-2 py-0.5 font-mono text-[10px] font-bold text-ink-950">
+                              <span className="shrink-0 rounded-full bg-amber-400 px-2 py-0.5 font-mono text-[10px] font-bold text-ink-950">
                                 {inCartQty} in cart
                               </span>
                             )}
@@ -2572,7 +2576,7 @@ function UpErpEcosystemHub() {
               </div>
 
               {/* Right: Active POS Cart & Checkout Terminal */}
-              <div className="flex flex-col justify-between rounded-xl border border-ink-800 bg-ink-900 p-5 space-y-5 h-fit sticky top-32">
+              <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900 p-5 space-y-5 h-fit lg:sticky lg:top-32">
                 <div className="space-y-4">
                   <div className="flex items-center justify-between border-b border-ink-800 pb-3">
                     <div className="flex items-center gap-2">
@@ -2767,74 +2771,76 @@ function UpErpEcosystemHub() {
                   hint="Completed Cash, Card, and Account Charge transactions appear here with printable receipts."
                 />
               ) : (
-                <Table>
-                  <thead>
-                    <tr>
-                      <Th>Receipt #</Th>
-                      <Th>Date & Time</Th>
-                      <Th>Customer</Th>
-                      <Th>Items Purchased</Th>
-                      <Th>Payment Method</Th>
-                      <Th>Total</Th>
-                      <Th className="text-right">Receipt</Th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredPosTransactions.map((tx) => (
-                      <tr key={tx.id} className="border-t border-ink-800/70">
-                        <Td>
-                          <span className="font-mono text-xs font-bold text-amber-300">
-                            {tx.receiptNumber}
-                          </span>
-                        </Td>
-                        <Td>
-                          <span className="font-mono text-xs text-ink-200">
-                            {tx.date} · {tx.time}
-                          </span>
-                        </Td>
-                        <Td>
-                          <div className="font-medium text-ink-100">{tx.customerName}</div>
-                          <div className="font-mono text-[10px] text-ink-400">
-                            {tx.customerType} · {tx.branch}
-                          </div>
-                        </Td>
-                        <Td>
-                          <div className="text-xs text-ink-200">
-                            {(tx.items || []).map((i) => `${i.quantity}x ${i.name}`).join(", ")}
-                          </div>
-                        </Td>
-                        <Td>
-                          <Chip
-                            tone={
-                              tx.paymentMethod === "Cash"
-                                ? "ok"
-                                : tx.paymentMethod === "Card"
-                                  ? "info"
-                                  : "warn"
-                            }
-                          >
-                            {tx.paymentMethod}
-                          </Chip>
-                        </Td>
-                        <Td>
-                          <span className="font-mono text-xs font-bold text-emerald-400">
-                            {money(tx.total)}
-                          </span>
-                        </Td>
-                        <Td className="text-right">
-                          <button
-                            type="button"
-                            onClick={() => setPosReceiptModalTx(tx)}
-                            className="inline-flex items-center gap-1 rounded bg-ink-850 px-2.5 py-1 font-mono text-[10px] text-ink-200 ring-1 ring-ink-700 hover:bg-ink-800"
-                          >
-                            <Printer className="h-3 w-3 text-court-400" />
-                            <span>View Receipt</span>
-                          </button>
-                        </Td>
+                <div className="w-full max-w-full overflow-x-auto">
+                  <Table>
+                    <thead>
+                      <tr>
+                        <Th>Receipt #</Th>
+                        <Th>Date &amp; Time</Th>
+                        <Th>Customer</Th>
+                        <Th>Items Purchased</Th>
+                        <Th>Payment Method</Th>
+                        <Th>Total</Th>
+                        <Th className="text-right">Receipt</Th>
                       </tr>
-                    ))}
-                  </tbody>
-                </Table>
+                    </thead>
+                    <tbody>
+                      {filteredPosTransactions.map((tx) => (
+                        <tr key={tx.id} className="border-t border-ink-800/70">
+                          <Td>
+                            <span className="font-mono text-xs font-bold text-amber-300">
+                              {tx.receiptNumber}
+                            </span>
+                          </Td>
+                          <Td>
+                            <span className="font-mono text-xs text-ink-200">
+                              {tx.date} · {tx.time}
+                            </span>
+                          </Td>
+                          <Td>
+                            <div className="font-medium text-ink-100">{tx.customerName}</div>
+                            <div className="font-mono text-[10px] text-ink-400">
+                              {tx.customerType} · {tx.branch}
+                            </div>
+                          </Td>
+                          <Td>
+                            <div className="text-xs text-ink-200">
+                              {(tx.items || []).map((i) => `${i.quantity}x ${i.name}`).join(", ")}
+                            </div>
+                          </Td>
+                          <Td>
+                            <Chip
+                              tone={
+                                tx.paymentMethod === "Cash"
+                                  ? "ok"
+                                  : tx.paymentMethod === "Card"
+                                    ? "info"
+                                    : "warn"
+                              }
+                            >
+                              {tx.paymentMethod}
+                            </Chip>
+                          </Td>
+                          <Td>
+                            <span className="font-mono text-xs font-bold text-emerald-400">
+                              {money(tx.total)}
+                            </span>
+                          </Td>
+                          <Td className="text-right">
+                            <button
+                              type="button"
+                              onClick={() => setPosReceiptModalTx(tx)}
+                              className="inline-flex items-center gap-1 rounded bg-ink-850 px-2.5 py-1 font-mono text-[10px] text-ink-200 ring-1 ring-ink-700 hover:bg-ink-800"
+                            >
+                              <Printer className="h-3 w-3 text-court-400" />
+                              <span>View Receipt</span>
+                            </button>
+                          </Td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </Table>
+                </div>
               )}
             </Panel>
           </div>
@@ -2842,255 +2848,290 @@ function UpErpEcosystemHub() {
       </main>
 
       {/* =================================================================== */}
-      {/* MODAL 1: CREATE / EDIT COURT RESERVATION                            */}
+      {/* MODAL 0: CREATE / EDIT VESCIO NEXUS BRANCH                          */}
       {/* =================================================================== */}
       <Modal
-        open={reservationModalOpen}
-        title={editingReservationId ? "Edit Court Reservation" : "New Court & Facility Reservation"}
-        meta="Real-time conflict checking across Academy sessions and UP ERP rentals (Full Court, HCA, HCB)"
-        onClose={() => setReservationModalOpen(false)}
+        open={branchModalOpen}
+        title={
+          editingBranchId
+            ? `Configure Nexus Branch · ${branchForm.name}`
+            : "Create New Vescio Nexus Branch"
+        }
+        meta="Configure Courts (Full/HCA/HCB rates), Gym Capacity, Physio Rooms & POS Register for this branch"
+        onClose={() => setBranchModalOpen(false)}
       >
-        <div className="p-4 space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Client Type">
-              <Select
-                value={resForm.clientType}
-                onChange={(v) =>
-                  setResForm({ ...resForm, clientType: v as CourtReservation["clientType"] })
-                }
-                options={[
-                  { label: "External Client", value: "External Client" },
-                  { label: "Academy Player (Private Rental)", value: "Academy Player" },
-                  { label: "Academy Team", value: "Academy Team" },
-                  { label: "Corporate / Club", value: "Corporate / Club" },
-                ]}
+        <div className="p-4 space-y-5 max-h-[78vh] overflow-y-auto">
+          <div className="grid items-end gap-3 sm:grid-cols-3">
+            <Field label="Branch Name">
+              <Input
+                value={branchForm.name}
+                onChange={(v) => setBranchForm({ ...branchForm, name: v })}
+                placeholder="e.g. Downtown Nexus Arena"
+                className="h-10"
               />
             </Field>
-
-            {resForm.clientType === "Academy Player" ? (
-              <Field label="Select Academy Player">
-                <Select
-                  value={resForm.linkedPlayerId}
-                  onChange={(pid) => {
-                    const p = players.find((x) => x.id === pid);
-                    setResForm({
-                      ...resForm,
-                      linkedPlayerId: pid,
-                      clientName: p ? p.name : resForm.clientName,
-                      phone: p ? p.parentPhone || p.phone || "" : resForm.phone,
-                      branch: p?.branch || resForm.branch,
-                    });
-                  }}
-                  options={[
-                    { label: "— Choose Player —", value: "" },
-                    ...players.map((p) => ({
-                      label: `${p.name} (${p.category})`,
-                      value: p.id,
-                    })),
-                  ]}
-                />
-              </Field>
-            ) : resForm.clientType === "Academy Team" ? (
-              <Field label="Select Academy Team">
-                <Select
-                  value={resForm.linkedTeamName}
-                  onChange={(tName) => {
-                    const t = teams.find((x) => x.name === tName);
-                    setResForm({
-                      ...resForm,
-                      linkedTeamName: tName,
-                      clientName: tName || resForm.clientName,
-                      branch: t?.branch || resForm.branch,
-                    });
-                  }}
-                  options={[
-                    { label: "— Choose Team —", value: "" },
-                    ...teams.map((t) => ({ label: `${t.name} (${t.branch})`, value: t.name })),
-                  ]}
-                />
-              </Field>
-            ) : (
-              <Field label="Client / Organization Name">
-                <Input
-                  value={resForm.clientName}
-                  onChange={(v) => setResForm({ ...resForm, clientName: v })}
-                  placeholder="e.g. Beirut Hoops Club / Rami Haddad"
-                />
-              </Field>
-            )}
+            <Field label="City / District">
+              <Input
+                value={branchForm.city}
+                onChange={(v) => setBranchForm({ ...branchForm, city: v })}
+                placeholder="e.g. Beirut"
+                className="h-10"
+              />
+            </Field>
+            <Field label="Branch Manager">
+              <Input
+                value={branchForm.manager}
+                onChange={(v) => setBranchForm({ ...branchForm, manager: v })}
+                placeholder="e.g. Coach Tariq"
+                className="h-10"
+              />
+            </Field>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid items-end gap-3 sm:grid-cols-3">
+            <Field label="Address / Location">
+              <Input
+                value={branchForm.address}
+                onChange={(v) => setBranchForm({ ...branchForm, address: v })}
+                placeholder="Street / Campus Building"
+                className="h-10"
+              />
+            </Field>
             <Field label="Contact Phone">
               <Input
-                value={resForm.phone}
-                onChange={(v) => setResForm({ ...resForm, phone: v })}
+                value={branchForm.phone}
+                onChange={(v) => setBranchForm({ ...branchForm, phone: v })}
                 placeholder="+961 70 000 000"
+                className="h-10"
               />
             </Field>
-            <Field label="Branch">
-              <Select
-                value={resForm.branch}
-                onChange={(bName) => {
-                  const bObj = branches.find((b) => b.name === bName);
-                  setResForm({
-                    ...resForm,
-                    branch: bName,
-                    court: bObj?.courts?.[0]?.name || "Court 1",
-                  });
-                }}
-                options={
-                  branches.length > 0
-                    ? branches.map((b) => ({ label: b.name, value: b.name }))
-                    : [{ label: "Main Branch", value: "Main Branch" }]
-                }
-              />
-            </Field>
-            <Field label="Court">
-              <Select
-                value={resForm.court}
-                onChange={(cName) => setResForm({ ...resForm, court: cName })}
-                options={
-                  selectedResBranchObj?.courts?.length
-                    ? selectedResBranchObj.courts.map((c) => ({ label: c.name, value: c.name }))
-                    : [{ label: "Court 1", value: "Court 1" }]
-                }
+            <Field label="Operating Hours">
+              <Input
+                value={branchForm.operatingHours}
+                onChange={(v) => setBranchForm({ ...branchForm, operatingHours: v })}
+                placeholder="08:00 - 22:30"
+                className="h-10"
               />
             </Field>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-4">
-            <Field label="Court Allocation">
-              <Select
-                value={resForm.courtAllocation}
-                onChange={(v) =>
-                  setResForm({ ...resForm, courtAllocation: v as CourtAllocationType })
-                }
-                options={COURT_ALLOCATION_OPTIONS.map((opt) => ({ label: opt, value: opt }))}
-              />
-            </Field>
-            <Field label="Date">
-              <Input
-                type="date"
-                value={resForm.date}
-                onChange={(v) => setResForm({ ...resForm, date: v })}
-              />
-            </Field>
-            <Field label="Start Time">
-              <Input
-                type="time"
-                value={resForm.startTime}
-                onChange={(v) => setResForm({ ...resForm, startTime: v })}
-              />
-            </Field>
-            <Field label="End Time">
-              <Input
-                type="time"
-                value={resForm.endTime}
-                onChange={(v) => setResForm({ ...resForm, endTime: v })}
-              />
-            </Field>
-          </div>
-
-          {/* Conflict / Simultaneous Half-Court Status Banner */}
-          {resConflictPreview.hasCourtConflict ? (
-            <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 font-mono text-xs text-red-300">
-              <span className="font-bold">DOUBLE-BOOKING BLOCKED:</span>{" "}
-              {resConflictPreview.courtConflictReason}
-            </div>
-          ) : resConflictPreview.simultaneousHalfCourtSession ? (
-            <div className="rounded-lg border border-sky-500/40 bg-sky-500/10 p-3 font-mono text-xs text-sky-300">
-              <span className="font-bold">SIMULTANEOUS HALF-COURT SHARE:</span> Opposite half-court
-              is booked by &ldquo;{resConflictPreview.simultaneousHalfCourtSession.title}&rdquo; —{" "}
-              {resForm.courtAllocation} is available!
-            </div>
-          ) : (
-            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2.5 font-mono text-xs text-emerald-300">
-              ✓ Slot available ({resForm.court} · {resForm.courtAllocation} ·{" "}
-              {resRatePreview.durationHours}h · Default rate {money(resRatePreview.defaultRate)}/hr
-              = {money(resRatePreview.totalAmount)})
-            </div>
-          )}
-
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Field label={`Hourly Rate ($/hr, default ${resRatePreview.defaultRate})`}>
-              <Input
-                type="number"
-                value={resForm.customHourlyRate}
-                onChange={(v) => setResForm({ ...resForm, customHourlyRate: v })}
-                placeholder={String(resRatePreview.defaultRate)}
-              />
-            </Field>
-            <Field label="Payment Status">
-              <Select
-                value={resForm.paymentStatus}
-                onChange={(v) =>
-                  setResForm({
-                    ...resForm,
-                    paymentStatus: v as CourtReservation["paymentStatus"],
-                  })
-                }
-                options={[
-                  { label: "Paid in Full", value: "Paid" },
-                  { label: "Pending Payment", value: "Pending" },
-                  { label: "Partial Deposit", value: "Partial" },
-                  { label: "Charge to Player Account", value: "Charged to Account" },
-                ]}
-              />
-            </Field>
-            <Field label="Payment Method">
-              <Select
-                value={resForm.paymentMethod}
-                onChange={(v) =>
-                  setResForm({
-                    ...resForm,
-                    paymentMethod: v as NonNullable<CourtReservation["paymentMethod"]>,
-                  })
-                }
-                options={[
-                  { label: "Cash", value: "Cash" },
-                  { label: "Card", value: "Card" },
-                  { label: "Bank Transfer", value: "Bank Transfer" },
-                  { label: "Account Charge", value: "Account Charge" },
-                ]}
-              />
-            </Field>
-          </div>
-
-          {!editingReservationId && (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-ink-800 bg-ink-950/60 p-3">
-              <label className="flex items-center gap-2 text-xs text-ink-200 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={resForm.isRecurring}
-                  onChange={(e) => setResForm({ ...resForm, isRecurring: e.target.checked })}
-                />
-                <span>Repeat weekly (Recurring Rental)</span>
-              </label>
-              {resForm.isRecurring && (
-                <div className="flex items-center gap-2 font-mono text-xs">
-                  <span className="text-ink-400">Weeks:</span>
-                  <input
-                    type="number"
-                    min="2"
-                    max="12"
-                    value={resForm.recurringWeeks}
-                    onChange={(e) =>
-                      setResForm({ ...resForm, recurringWeeks: Number(e.target.value) || 4 })
-                    }
-                    className="w-16 rounded border border-ink-700 bg-ink-900 px-2 py-1 text-center text-ink-100"
-                  />
+          {/* 1. Courts Configuration */}
+          <div className="rounded-xl border border-ink-800 bg-ink-950/70 p-3.5 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="font-mono text-xs font-bold text-court-300">
+                  1. Branch Courts &amp; Hourly Rental Rates (Full · HCA · HCB)
                 </div>
-              )}
+                <div className="text-[11px] text-ink-400">
+                  Add courts and configure Full Court and Half-Court (HCA/HCB) hourly rates.
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                onClick={() =>
+                  setBranchForm({
+                    ...branchForm,
+                    courts: [
+                      ...branchForm.courts,
+                      {
+                        id: uid("crt"),
+                        name: `Court ${branchForm.courts.length + 1}`,
+                        enableHalfCourts: true,
+                        fullCourtHourlyRate: "60",
+                        halfCourtHourlyRate: "35",
+                        operatingHours: branchForm.operatingHours || "08:00 - 22:30",
+                      },
+                    ],
+                  })
+                }
+              >
+                + Add Court
+              </Button>
             </div>
-          )}
+
+            <div className="space-y-2">
+              {branchForm.courts.map((crt, idx) => (
+                <div
+                  key={crt.id}
+                  className="grid items-end gap-2 rounded-lg border border-ink-800 bg-ink-900 p-2.5 sm:grid-cols-[1.4fr_1fr_1fr_auto]"
+                >
+                  <Field label={`Court #${idx + 1} Name`}>
+                    <Input
+                      value={crt.name}
+                      onChange={(v) => {
+                        const next = [...branchForm.courts];
+                        next[idx] = { ...crt, name: v };
+                        setBranchForm({ ...branchForm, courts: next });
+                      }}
+                      className="h-10"
+                    />
+                  </Field>
+                  <Field label="Full Court ($/hr)">
+                    <Input
+                      type="number"
+                      value={crt.fullCourtHourlyRate}
+                      onChange={(v) => {
+                        const next = [...branchForm.courts];
+                        next[idx] = { ...crt, fullCourtHourlyRate: v };
+                        setBranchForm({ ...branchForm, courts: next });
+                      }}
+                      className="h-10"
+                    />
+                  </Field>
+                  <Field label="Half HCA/HCB ($/hr)">
+                    <Input
+                      type="number"
+                      value={crt.halfCourtHourlyRate}
+                      onChange={(v) => {
+                        const next = [...branchForm.courts];
+                        next[idx] = { ...crt, halfCourtHourlyRate: v };
+                        setBranchForm({ ...branchForm, courts: next });
+                      }}
+                      className="h-10"
+                    />
+                  </Field>
+                  <div className="flex items-end">
+                    {branchForm.courts.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setBranchForm({
+                            ...branchForm,
+                            courts: branchForm.courts.filter((_, i) => i !== idx),
+                          })
+                        }
+                        className="flex h-10 w-10 items-center justify-center rounded-md bg-ink-850 text-ink-400 ring-1 ring-ink-700 hover:text-red-400"
+                        title="Remove Court"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 2. Gym & S&C Configuration */}
+          <div className="rounded-xl border border-ink-800 bg-ink-950/70 p-3.5 space-y-3">
+            <div className="font-mono text-xs font-bold text-sky-300">
+              2. Gym &amp; Strength Floor Setup
+            </div>
+            <div className="grid items-end gap-3 sm:grid-cols-3">
+              <Field label="Max Gym Athlete Capacity">
+                <Input
+                  type="number"
+                  value={branchForm.gymCapacity}
+                  onChange={(v) => setBranchForm({ ...branchForm, gymCapacity: v })}
+                  className="h-10"
+                />
+              </Field>
+              <Field label="Default Monthly S&C Fee ($)">
+                <Input
+                  type="number"
+                  value={branchForm.gymDefaultMonthlyFee}
+                  onChange={(v) => setBranchForm({ ...branchForm, gymDefaultMonthlyFee: v })}
+                  className="h-10"
+                />
+              </Field>
+              <Field label="Equipment & Zones Summary">
+                <Input
+                  value={branchForm.gymEquipmentNotes}
+                  onChange={(v) => setBranchForm({ ...branchForm, gymEquipmentNotes: v })}
+                  placeholder="Racks, turf sled, weights..."
+                  className="h-10"
+                />
+              </Field>
+            </div>
+          </div>
+
+          {/* 3. Physiotherapy Clinic Rooms */}
+          <div className="rounded-xl border border-ink-800 bg-ink-950/70 p-3.5 space-y-3">
+            <div className="font-mono text-xs font-bold text-rose-300">
+              3. Physiotherapy &amp; Sports Medicine Rooms
+            </div>
+            <div className="grid items-end gap-3 sm:grid-cols-3">
+              <Field label="Physio Treatment Rooms">
+                <Input
+                  type="number"
+                  value={branchForm.physioRoomsCount}
+                  onChange={(v) => setBranchForm({ ...branchForm, physioRoomsCount: v })}
+                  className="h-10"
+                />
+              </Field>
+              <Field label="Lead Physiotherapist">
+                <Input
+                  value={branchForm.leadPhysiotherapist}
+                  onChange={(v) => setBranchForm({ ...branchForm, leadPhysiotherapist: v })}
+                  className="h-10"
+                />
+              </Field>
+              <Field label="Clinic Status">
+                <Select
+                  value={branchForm.physioClinicStatus}
+                  onChange={(v) =>
+                    setBranchForm({
+                      ...branchForm,
+                      physioClinicStatus: v as typeof branchForm.physioClinicStatus,
+                    })
+                  }
+                  options={[
+                    { label: "Open", value: "Open" },
+                    { label: "By Appointment", value: "By Appointment" },
+                    { label: "Closed", value: "Closed" },
+                  ]}
+                  className="h-10"
+                />
+              </Field>
+            </div>
+          </div>
+
+          {/* 4. Kiosk POS Register Setup */}
+          <div className="rounded-xl border border-ink-800 bg-ink-950/70 p-3.5 space-y-3">
+            <div className="font-mono text-xs font-bold text-amber-300">
+              4. On-Site Kiosk POS Register Setup
+            </div>
+            <div className="grid items-end gap-3 sm:grid-cols-3">
+              <Field label="POS Register Terminal Name">
+                <Input
+                  value={branchForm.posRegisterName}
+                  onChange={(v) => setBranchForm({ ...branchForm, posRegisterName: v })}
+                  className="h-10"
+                />
+              </Field>
+              <Field label="Starting Cash Float ($)">
+                <Input
+                  type="number"
+                  value={branchForm.posStartingFloat}
+                  onChange={(v) => setBranchForm({ ...branchForm, posStartingFloat: v })}
+                  className="h-10"
+                />
+              </Field>
+              <Field label="Register Status">
+                <Select
+                  value={branchForm.posStatus}
+                  onChange={(v) =>
+                    setBranchForm({
+                      ...branchForm,
+                      posStatus: v as typeof branchForm.posStatus,
+                    })
+                  }
+                  options={[
+                    { label: "Open", value: "Open" },
+                    { label: "Closed", value: "Closed" },
+                  ]}
+                  className="h-10"
+                />
+              </Field>
+            </div>
+          </div>
 
           <div className="flex items-center justify-end gap-2 pt-2">
-            <Button variant="ghost" onClick={() => setReservationModalOpen(false)}>
+            <Button variant="ghost" onClick={() => setBranchModalOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={() => void handleSaveCourtReservation()}>
-              Confirm Court Reservation ({money(resRatePreview.totalAmount)})
+            <Button onClick={() => void handleSaveNexusBranch()}>
+              {editingBranchId ? "Save Branch Changes" : "Create Nexus Branch"}
             </Button>
           </div>
         </div>
@@ -3389,7 +3430,7 @@ function UpErpEcosystemHub() {
         onClose={() => setPhysioIntakeOpen(false)}
       >
         <div className="p-4 space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-3">
             <Field label="Patient Type">
               <Select
                 value={physioForm.patientType}
@@ -3439,6 +3480,18 @@ function UpErpEcosystemHub() {
                 />
               </Field>
             )}
+
+            <Field label="Facility Branch">
+              <Select
+                value={physioForm.branch}
+                onChange={(v) => setPhysioForm({ ...physioForm, branch: v })}
+                options={
+                  branches.length > 0
+                    ? branches.map((b) => ({ label: b.name, value: b.name }))
+                    : [{ label: "Main Branch", value: "Main Branch" }]
+                }
+              />
+            </Field>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-3">
@@ -3546,7 +3599,7 @@ function UpErpEcosystemHub() {
               Cancel
             </Button>
             <Button onClick={() => void handleCreatePhysioIntake()}>
-              Save Intake & Sync Academy Status
+              Save Intake &amp; Sync Academy Status
             </Button>
           </div>
         </div>
@@ -3569,7 +3622,7 @@ function UpErpEcosystemHub() {
           <div className="p-4 space-y-4">
             <div className="rounded-lg border border-ink-800 bg-ink-950/70 p-3 space-y-3">
               <div className="font-mono text-xs font-semibold text-rose-300">
-                + Record Treatment Session & Therapist SOAP Note
+                + Record Treatment Session &amp; Therapist SOAP Note
               </div>
               <div className="grid gap-3 sm:grid-cols-3">
                 <Field label="Date">
@@ -3691,17 +3744,29 @@ function UpErpEcosystemHub() {
       <Modal
         open={posCatalogModalOpen}
         title="Add Kiosk POS Product"
-        meta="Add drinks, snacks, walk-in passes, or recovery items to the Kiosk POS grid"
+        meta="Add drinks, snacks, walk-in passes, or recovery items to the Vescio Nexus Kiosk POS grid"
         onClose={() => setPosCatalogModalOpen(false)}
       >
         <div className="p-4 space-y-4">
-          <Field label="Product Name">
-            <Input
-              value={newCatalogItem.name}
-              onChange={(v) => setNewCatalogItem({ ...newCatalogItem, name: v })}
-              placeholder="e.g. Electrolyte Recovery Drink (500ml)"
-            />
-          </Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Product Name">
+              <Input
+                value={newCatalogItem.name}
+                onChange={(v) => setNewCatalogItem({ ...newCatalogItem, name: v })}
+                placeholder="e.g. Electrolyte Recovery Drink (500ml)"
+              />
+            </Field>
+            <Field label="Branch Scope">
+              <Select
+                value={newCatalogItem.branch}
+                onChange={(v) => setNewCatalogItem({ ...newCatalogItem, branch: v })}
+                options={[
+                  { label: "All Branches (Shared)", value: "All" },
+                  ...branches.map((b) => ({ label: b.name, value: b.name })),
+                ]}
+              />
+            </Field>
+          </div>
           <div className="grid gap-3 sm:grid-cols-3">
             <Field label="Category">
               <Select
@@ -3750,7 +3815,7 @@ function UpErpEcosystemHub() {
         title={
           posReceiptModalTx ? `POS Receipt · ${posReceiptModalTx.receiptNumber}` : "POS Receipt"
         }
-        meta="Official Kiosk Point-of-Sale Transaction Receipt"
+        meta="Official Vescio Nexus Kiosk Point-of-Sale Transaction Receipt"
         onClose={() => setPosReceiptModalTx(null)}
       >
         {posReceiptModalTx && (
@@ -3759,7 +3824,7 @@ function UpErpEcosystemHub() {
               <div className="flex items-center justify-between border-b border-ink-800 pb-2">
                 <div>
                   <div className="font-bold text-ink-100">
-                    {db.academy?.name || "Vescio Vector"} · UP ERP Kiosk POS
+                    {db.academy?.name || "Vescio Vector"} · Vescio Nexus Kiosk POS
                   </div>
                   <div className="text-[10px] text-ink-400">
                     Branch: {posReceiptModalTx.branch} · Cashier: {posReceiptModalTx.cashierName}

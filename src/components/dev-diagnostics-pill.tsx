@@ -91,8 +91,8 @@ export function DevDiagnosticsPill() {
 
   return (
     <>
-      {/* Bottom-left Floating Dev Diagnostics Badge */}
-      <div className="fixed bottom-4 left-4 z-50 flex items-center gap-2">
+      {/* Bottom-right Floating Dev Diagnostics Badge (avoids bottom-left sidebar footer overlap) */}
+      <div className="fixed bottom-16 right-4 lg:bottom-4 lg:right-4 z-40 flex items-center gap-2">
         {errorCount > 0 ? (
           <button
             type="button"

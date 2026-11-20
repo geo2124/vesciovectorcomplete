@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
+    "test": "vitest run",
     "postinstall": "node scripts/patch-tanstack.mjs"
   },
   "overrides": {
@@ -98,6 +99,7 @@
     "prettier": "^3.7.3",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.56.1",
-    "vite": "8.1.5"
+    "vite": "8.1.5",
+    "vitest": "^2.1.0"
   }
 }

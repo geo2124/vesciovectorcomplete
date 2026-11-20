@@ -450,6 +450,25 @@ export type Court = {
   halfCourtHourlyRate?: number | undefined;
 };
 
+export type CourtRateType = "Half Court Rate" | "Full Court Rate" | "Private Rate" | "Academy Rate";
+
+export type BranchNexusRates = {
+  halfCourtHourlyRate: number;
+  fullCourtHourlyRate: number;
+  privateBaseFee: number;
+  privateExtraPlayerFee: number;
+  academyHourlyRate: number;
+  updatedAt?: string | undefined;
+};
+
+export type BranchOffDay = {
+  id: string;
+  date: string;
+  reason: string;
+  createdBy?: string | undefined;
+  createdAt: string;
+};
+
 export type Branch = {
   id: string;
   name: string;
@@ -470,6 +489,18 @@ export type Branch = {
   operatingHours?: string | undefined;
   schedules?: BranchScheduleSlot[] | undefined;
   weeklySchedule?: DaySchedule[] | undefined;
+  // Vescio Nexus Multi-Branch Facility Configuration
+  nexusRates?: BranchNexusRates | undefined;
+  offDays?: BranchOffDay[] | undefined;
+  gymCapacity?: number | undefined;
+  gymEquipmentNotes?: string | undefined;
+  gymDefaultMonthlyFee?: number | undefined;
+  physioRoomsCount?: number | undefined;
+  leadPhysiotherapist?: string | undefined;
+  physioClinicStatus?: "Open" | "By Appointment" | "Closed" | undefined;
+  posRegisterName?: string | undefined;
+  posStartingFloat?: number | undefined;
+  posStatus?: "Open" | "Closed" | undefined;
 };
 
 export const branches: Branch[] = [];
@@ -857,7 +888,7 @@ export type CrmLead = {
 export const crmLeads: CrmLead[] = [];
 
 // ---------------------------------------------------------------------------
-// UP ERP Ecosystem Types (Court Reservations, Gym & S&C, Physio & Medical, Kiosk POS)
+// Vescio Nexus Types (Court Reservations, Gym & S&C, Physio & Medical, Kiosk POS)
 // ---------------------------------------------------------------------------
 
 export type CourtReservation = {
@@ -875,15 +906,35 @@ export type CourtReservation = {
   startTime: string;
   endTime: string;
   durationHours: number;
+  // Snapshot-Protected Rate Engine Fields
+  rateType?: CourtRateType | undefined;
+  snapshotUnitRate?: number | undefined;
+  snapshotExtraPlayerRate?: number | undefined;
+  playerCount?: number | undefined;
+  baseCalculatedAmount?: number | undefined;
+  freePass?: boolean | undefined;
+  discountPercent?: number | undefined;
+  discountFixedAmount?: number | undefined;
   hourlyRate: number;
   totalAmount: number;
   paidAmount: number;
-  paymentStatus: "Paid" | "Pending" | "Partial" | "Charged to Account";
-  paymentMethod?: "Cash" | "Card" | "Bank Transfer" | "Account Charge" | undefined;
+  paymentStatus: "Paid" | "Pending" | "Partial" | "Charged to Account" | "Free Pass";
+  paymentMethod?: "Cash" | "Card" | "Bank Transfer" | "Wish / OMT" | "Account Charge" | undefined;
+  // Booking Type & Recurrence Fields
+  bookingType?: "walk_in" | "recurring" | undefined;
+  recurrenceMode?: "single" | "weeks" | "continuous" | "single_materialized" | undefined;
   isRecurring?: boolean | undefined;
   recurringWeeks?: number | undefined;
   recurringGroupId?: string | undefined;
+  seriesStartDate?: string | undefined;
+  continuousActive?: boolean | undefined;
+  continuousStoppedAfterDate?: string | undefined;
+  skippedDates?: string[] | undefined;
+  // Completion & Cash-In Audit Fields
   status: "Confirmed" | "Completed" | "Cancelled";
+  cashedInAt?: string | undefined;
+  cashedInBy?: string | undefined;
+  ledgerEntryId?: string | undefined;
   notes?: string | undefined;
   createdAt: string;
   updatedAt?: string | undefined;
@@ -1002,6 +1053,7 @@ export type PosCatalogItem = {
   stock: number;
   sku?: string | undefined;
   linkedStockId?: string | undefined;
+  branch?: string | undefined;
   active: boolean;
 };
 

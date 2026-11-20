@@ -1154,7 +1154,7 @@ function PlayersPage() {
                                 ? "bg-red-500/20 text-red-300 ring-red-500/40"
                                 : "bg-amber-500/20 text-amber-300 ring-amber-500/40"
                             }`}
-                            title="Synced from UP ERP Physiotherapy Module"
+                            title="Synced from Vescio Nexus Physiotherapy Module"
                           >
                             <span>
                               {p.medicalStatus === "Injured"

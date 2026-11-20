@@ -96,9 +96,12 @@ import {
 } from "@/lib/mock-data";
 import type {
   Branch,
+  BranchNexusRates,
+  BranchOffDay,
   Coach,
   Court,
   CourtAllocationType,
+  CourtRateType,
   CourtReservation,
   CrmCommunicationEntry,
   CrmLead,
@@ -145,8 +148,12 @@ export {
 } from "./mock-data";
 
 export type {
+  Branch,
+  BranchNexusRates,
+  BranchOffDay,
   Court,
   CourtAllocationType,
+  CourtRateType,
   CourtReservation,
   GymMember,
   GymWorkoutLog,
@@ -1553,24 +1560,73 @@ export function checkCourtScheduleConflict(
       ? (dbStore.getSlice("courtReservations") as CourtReservation[]) || []
       : [];
 
-  const reservationVirtualSessions: SessionItem[] = reservationsList
-    .filter((r) => r && r.id !== excludeReservationId && r.status !== "Cancelled")
+  const getWeekdayUtc = (iso: string): number | null => {
+    const parts = iso.split("-").map(Number);
+    if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
+    return new Date(Date.UTC(parts[0]!, parts[1]! - 1, parts[2]!)).getUTCDay();
+  };
+
+  const candidateWeekday = getWeekdayUtc(candidateDate);
+
+  const concreteForDate = reservationsList.filter(
+    (r) =>
+      r &&
+      r.id !== excludeReservationId &&
+      r.status !== "Cancelled" &&
+      (r.date || "").trim() === candidateDate,
+  );
+
+  // Also include active Continuous recurring series matching candidateDate weekday if not already materialized or skipped
+  const projectedContinuousForDate: CourtReservation[] = reservationsList
+    .filter((r) => {
+      if (!r || r.id === excludeReservationId || r.status === "Cancelled") return false;
+      if (r.recurrenceMode !== "continuous" || r.continuousActive === false) return false;
+      const startIso = (r.seriesStartDate || r.date || "").trim();
+      if (!startIso || candidateDate <= startIso) return false;
+      if (r.continuousStoppedAfterDate && candidateDate > r.continuousStoppedAfterDate) {
+        return false;
+      }
+      if (Array.isArray(r.skippedDates) && r.skippedDates.includes(candidateDate)) {
+        return false;
+      }
+      if (candidateWeekday === null || getWeekdayUtc(startIso) !== candidateWeekday) {
+        return false;
+      }
+      const alreadyMaterialized = reservationsList.some(
+        (m) =>
+          m &&
+          m.id !== r.id &&
+          m.recurringGroupId &&
+          m.recurringGroupId === r.recurringGroupId &&
+          (m.date || "").trim() === candidateDate,
+      );
+      return !alreadyMaterialized;
+    })
     .map((r) => ({
-      id: r.id,
-      kind: "Reservation",
-      title: `[UP ERP Rental] ${r.clientName}`,
-      detail: `${r.clientType} · ${r.courtAllocation}`,
-      branch: r.branch,
-      court: r.court,
-      courtAllocation: r.courtAllocation,
-      date: r.date,
-      time: r.startTime,
-      endTime: r.endTime,
-      durationHours: r.durationHours,
-      coach: "",
-      team: r.linkedTeamName || r.clientType,
-      status: "Planned",
+      ...r,
+      id: `${r.id}__occ__${candidateDate}`,
+      date: candidateDate,
     }));
+
+  const reservationVirtualSessions: SessionItem[] = [
+    ...concreteForDate,
+    ...projectedContinuousForDate,
+  ].map((r) => ({
+    id: r.id,
+    kind: "Reservation",
+    title: `[Vescio Nexus Rental] ${r.clientName}`,
+    detail: `${r.clientType} · ${r.courtAllocation}`,
+    branch: r.branch,
+    court: r.court,
+    courtAllocation: r.courtAllocation,
+    date: r.date,
+    time: r.startTime,
+    endTime: r.endTime,
+    durationHours: r.durationHours,
+    coach: "",
+    team: r.linkedTeamName || r.clientType,
+    status: "Planned",
+  }));
 
   const combinedSlots = [...existingSessions, ...reservationVirtualSessions];
 

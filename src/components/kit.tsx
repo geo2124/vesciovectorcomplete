@@ -104,14 +104,17 @@ export function Stat({
   label,
   value,
   note,
+  sub,
   accent,
 }: {
   label: string;
   value: string;
   note?: string | undefined;
+  sub?: string | undefined;
   accent?: boolean | undefined;
 }) {
   const valStr = String(value ?? "");
+  const subtitle = note ?? sub;
   const textSize =
     valStr.length > 20
       ? "text-base sm:text-lg"
@@ -125,16 +128,16 @@ export function Stat({
     <div className="panel tick-diag relative overflow-hidden p-4 sm:p-5 min-w-0">
       <div className="label-mono truncate">{label}</div>
       <div
-        className={`font-display mt-2 ${textSize} leading-tight tracking-tight text-ink-100 font-bold break-words`}
+        className={`font-display mt-2 tabular-nums ${textSize} leading-tight tracking-tight text-ink-100 font-bold break-words`}
         title={valStr}
       >
         {value}
       </div>
-      {note ? (
+      {subtitle ? (
         <div
           className={`mt-2 font-mono text-[11px] truncate ${accent ? "text-court-400" : "text-ink-300"}`}
         >
-          {note}
+          {subtitle}
         </div>
       ) : null}
     </div>
@@ -221,17 +224,24 @@ export function Chip({
   tone = "neutral",
 }: {
   children: ReactNode;
-  tone?: "neutral" | "accent" | "good" | "warn" | "bad" | undefined;
+  tone?:
+    "neutral" | "accent" | "court" | "info" | "good" | "ok" | "warn" | "bad" | "danger" | undefined;
 }) {
   const tones: Record<string, string> = {
     neutral: "bg-ink-800 text-ink-200",
     accent: "bg-court-500/15 text-court-400",
+    court: "bg-court-500/15 text-court-300",
+    info: "bg-sky-500/15 text-sky-300",
     good: "bg-good/15 text-good",
+    ok: "bg-emerald-500/15 text-emerald-300",
     warn: "bg-warn/15 text-warn",
     bad: "bg-bad/20 text-bad",
+    danger: "bg-red-500/20 text-red-300",
   };
   return (
-    <span className={`rounded px-2 py-0.5 font-mono text-[10px] tracking-wide ${tones[tone]}`}>
+    <span
+      className={`rounded px-2 py-0.5 font-mono text-[10px] tracking-wide ${tones[tone] ?? "bg-ink-800 text-ink-200"}`}
+    >
       {children}
     </span>
   );
@@ -271,22 +281,28 @@ export function Table({
   children,
   footer,
 }: {
-  head: ReactNode;
+  head?: ReactNode | undefined;
   children: ReactNode;
-  footer?: ReactNode;
+  footer?: ReactNode | undefined;
 }) {
   return (
     <>
       <div className="overflow-x-auto w-full -mx-4 px-4 sm:mx-0 sm:px-0">
         <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-ink-800 text-left font-mono text-[10px] tracking-[0.12em] text-ink-400">
-              {head}
-            </tr>
-          </thead>
-          <TableContext.Provider value={true}>
-            <tbody className="divide-y divide-ink-800/70">{children}</tbody>
-          </TableContext.Provider>
+          {head ? (
+            <>
+              <thead>
+                <tr className="border-b border-ink-800 text-left font-mono text-[10px] tracking-[0.12em] text-ink-400">
+                  {head}
+                </tr>
+              </thead>
+              <TableContext.Provider value={true}>
+                <tbody className="divide-y divide-ink-800/70">{children}</tbody>
+              </TableContext.Provider>
+            </>
+          ) : (
+            <TableContext.Provider value={true}>{children}</TableContext.Provider>
+          )}
         </table>
       </div>
       {footer ? (
@@ -302,9 +318,20 @@ export function Table({
   );
 }
 
-export function Th({ children }: { children: ReactNode; hide?: boolean }) {
+export function Th({
+  children,
+  className = "",
+}: {
+  children: ReactNode;
+  hide?: boolean | undefined;
+  className?: string | undefined;
+}) {
   return (
-    <th className="px-4 py-2.5 font-medium whitespace-nowrap sm:whitespace-normal">{children}</th>
+    <th
+      className={`px-4 py-2.5 text-left font-mono text-[10px] tracking-[0.12em] text-ink-400 font-medium whitespace-nowrap sm:whitespace-normal ${className}`}
+    >
+      {children}
+    </th>
   );
 }
 
@@ -408,16 +435,18 @@ export function Field({
   label,
   hint,
   error,
+  labelClassName,
   children,
 }: {
   label: string;
   hint?: string | undefined;
   error?: string | undefined;
+  labelClassName?: string | undefined;
   children: ReactNode;
 }) {
   return (
-    <label className="block">
-      <span className="label-mono">{label}</span>
+    <label className="block min-w-0">
+      <span className={cn("label-mono", labelClassName)}>{label}</span>
       {children}
       {error ? (
         <span className="mt-1 block font-mono text-[10px] text-warn">{error}</span>
@@ -462,7 +491,7 @@ export function Input({
       autoComplete={autoComplete}
       autoFocus={autoFocus}
       disabled={disabled}
-      className={className ? className : controlCls}
+      className={cn(controlCls, className)}
     />
   );
 }
@@ -472,19 +501,32 @@ export function Select({
   onChange,
   options,
   labels,
+  disabled,
+  className,
 }: {
   value: string;
   onChange: (v: string) => void;
-  options: string[];
+  options: ReadonlyArray<string | { label: string; value: string }>;
   labels?: Record<string, string> | undefined;
+  disabled?: boolean | undefined;
+  className?: string | undefined;
 }) {
   return (
-    <select value={value ?? ""} onChange={(e) => onChange(e.target.value)} className={controlCls}>
-      {options.map((o) => (
-        <option key={o} value={o} className="bg-ink-900 text-ink-100">
-          {labels?.[o] ?? o}
-        </option>
-      ))}
+    <select
+      value={value ?? ""}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+      className={cn(controlCls, className)}
+    >
+      {options.map((o) => {
+        const optValue = typeof o === "string" ? o : o.value;
+        const optLabel = typeof o === "string" ? (labels?.[o] ?? o) : o.label;
+        return (
+          <option key={optValue} value={optValue} className="bg-ink-900 text-ink-100">
+            {optLabel}
+          </option>
+        );
+      })}
     </select>
   );
 }
@@ -723,26 +765,29 @@ export function EmptyState({
   children,
   title,
   description,
+  hint,
   action,
   className = "",
   asTableRow,
 }: {
-  children?: ReactNode;
-  title?: ReactNode;
-  description?: ReactNode;
-  action?: ReactNode;
-  className?: string;
-  asTableRow?: boolean;
+  children?: ReactNode | undefined;
+  title?: ReactNode | undefined;
+  description?: ReactNode | undefined;
+  hint?: ReactNode | undefined;
+  action?: ReactNode | undefined;
+  className?: string | undefined;
+  asTableRow?: boolean | undefined;
 }) {
   const inTable = useContext(TableContext);
   const renderAsRow = asTableRow !== undefined ? asTableRow : inTable;
+  const descContent = description ?? hint;
 
   const content = (
     <div className={`px-4 py-10 text-center font-mono text-[11px] text-ink-400 ${className}`}>
       {title ? (
         <div className="font-display text-sm font-semibold text-ink-200 mb-1">{title}</div>
       ) : null}
-      {description ? <div className="text-xs text-ink-400 mb-3">{description}</div> : null}
+      {descContent ? <div className="text-xs text-ink-400 mb-3">{descContent}</div> : null}
       {children}
       {action ? <div className="mt-3 flex justify-center">{action}</div> : null}
     </div>
