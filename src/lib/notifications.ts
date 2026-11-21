@@ -130,13 +130,16 @@ export async function dispatchNotification(
     try {
       const tenantId = getTenantSlug();
       if (!tenantId || !firestore) return "";
-      const snap = await getDoc(doc(firestore, "tenants", tenantId, "private", "secrets"));
+      let snap = await getDoc(doc(firestore, "tenants", tenantId, "settings", "secrets"));
+      if (!snap.exists()) {
+        snap = await getDoc(doc(firestore, "tenants", tenantId, "private", "secrets"));
+      }
       if (snap.exists()) {
         const val = snap.data()?.[field];
         if (typeof val === "string" && val.trim()) return val.trim();
       }
     } catch {
-      // Non-admin callers may not have read access to /private/secrets; proceed without throwing
+      // Non-admin callers may not have read access to /settings/secrets; proceed without throwing
     }
     return "";
   };

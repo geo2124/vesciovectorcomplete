@@ -886,15 +886,17 @@ export function logSystemError(input: LogSystemErrorInput): SystemErrorLog | nul
       });
     }
 
-    // Layer 3: Automatic Background Email & Admin Notification Dispatch (debounced 60s per unique error message)
+    // Layer 3: Automatic Background Email & Admin Notification Dispatch (debounced 60s, gated behind explicit opt-in flag in Staging / non-production)
+    const isAutoExternalRelayEnabled =
+      typeof import.meta !== "undefined" &&
+      import.meta.env?.VITE_ENABLE_EXTERNAL_ERROR_EMAIL_RELAY === "true";
     const watchedAutoSources = new Set<SystemErrorLog["source"]>([
       "firestore_write",
-      "form_submit",
       "transaction",
       "runtime_error",
       "unhandled_promise",
     ]);
-    if (watchedAutoSources.has(input.source)) {
+    if (isAutoExternalRelayEnabled && watchedAutoSources.has(input.source)) {
       const uniqueErrorKey = `${input.source}::${errorMessage.slice(0, 180)}`;
       const lastDispatchedAt = autoEmailDebounceMap.get(uniqueErrorKey) || 0;
       if (nowMs - lastDispatchedAt >= AUTO_EMAIL_DEBOUNCE_MS) {
@@ -1024,7 +1026,8 @@ export async function clearErrorLogs(tenantId?: string): Promise<void> {
 }
 
 /**
- * Initializes global window error / unhandledrejection listeners and console.error / toast.error interceptors.
+ * Initializes global window error / unhandledrejection listeners and console.error interceptors.
+ * Note: Benign user validation toast.error messages are intentionally NOT intercepted as system errors.
  * Safe and idempotent to call once at startup.
  */
 export function initGlobalErrorTelemetry(): void {
@@ -1088,7 +1091,7 @@ export function initGlobalErrorTelemetry(): void {
     });
   });
 
-  // Intercept console.error for watched Firestore / Storage / Call-stack / Validation patterns
+  // Intercept console.error for watched Firestore / Storage / Call-stack patterns
   const origConsoleError = console.error.bind(console);
   console.error = (...args: unknown[]) => {
     origConsoleError(...args);
@@ -1132,32 +1135,6 @@ export function initGlobalErrorTelemetry(): void {
       /* never fail console.error */
     }
   };
-
-  // Intercept toast.error to capture user-facing failure alerts in the flight recorder
-  const origToastError = toast.error.bind(toast);
-  toast.error = ((message: unknown, data?: unknown) => {
-    if (!isLoggingInProgress && typeof message === "string") {
-      // Skip duplicating if this toast was just emitted by our own copy helper
-      if (
-        !message.includes(" diagnostic report ") &&
-        !message.includes("AI Studio Prompt copied")
-      ) {
-        logSystemError({
-          source:
-            message.toLowerCase().includes("sync") || message.toLowerCase().includes("save")
-              ? "firestore_write"
-              : "form_submit",
-          operation: "toast.error",
-          error: message,
-          payload: data,
-        });
-      }
-    }
-    return origToastError(
-      message as Parameters<typeof origToastError>[0],
-      data as Parameters<typeof origToastError>[1],
-    );
-  }) as typeof toast.error;
 }
 
 /**

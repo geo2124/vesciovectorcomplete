@@ -29,7 +29,7 @@ import {
   coachMatchesBranch,
   getCoachTeams,
 } from "@/lib/data-store";
-import { useAuth } from "@/lib/auth";
+import { useAuth, provisionFirebaseAuthUser } from "@/lib/auth";
 import {
   uploadCoachLicense,
   uploadDocumentAttachment,
@@ -431,10 +431,19 @@ function CoachesPage() {
     const primaryLicenseUrl = sanitizedDocs[0]?.url || finalForm.licenseUrl;
     const primaryLicenseName = sanitizedDocs[0]?.name || finalForm.licenseName;
 
+    if (finalForm.portal && finalForm.password?.trim()) {
+      const coachEmail =
+        finalForm.email?.trim().toLowerCase() ||
+        `${(finalForm.username || newName.toLowerCase().replace(/[^a-z0-9]/g, "")).trim().toLowerCase()}@${tenantId}.academy`;
+      void provisionFirebaseAuthUser(coachEmail, finalForm.password.trim());
+    }
+
+    const { password: _coachPassword, ...cleanFinalForm } = finalForm;
+
     const cData: Coach = editing
       ? {
           ...editing,
-          ...finalForm,
+          ...cleanFinalForm,
           name: newName,
           branch: primaryBranch,
           branches: assignedBranches,
@@ -445,7 +454,7 @@ function CoachesPage() {
           documents: sanitizedDocs,
         }
       : {
-          ...finalForm,
+          ...cleanFinalForm,
           name: newName,
           branch: primaryBranch,
           branches: assignedBranches,
@@ -456,6 +465,8 @@ function CoachesPage() {
           documents: sanitizedDocs,
           id: `c-${Date.now().toString(36)}`,
         };
+    delete (cData as Record<string, unknown>).password;
+    delete (cData as Record<string, unknown>).passwordHash;
 
     const nameChanged = Boolean(editing && oldName && oldName !== newName);
     const oldNameLower = oldName?.toLowerCase();

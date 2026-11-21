@@ -6,7 +6,8 @@ service cloud.firestore {
     // Authentication & Core Helpers (Staging Environment)
     // ----------------------------------------------------
     function isSignedIn() {
-      return request.auth != null;
+      return request.auth != null &&
+        request.auth.token.firebase.sign_in_provider != 'anonymous';
     }
 
     function hasSuperAdminUserDoc() {
@@ -15,7 +16,10 @@ service cloud.firestore {
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in [
           'SUPER_ADMIN',
           'Super Admin',
-          'Academy Manager'
+          'super_admin',
+          'Academy Manager',
+          'ACADEMY_MANAGER',
+          'academy_manager'
         ];
     }
 
@@ -31,19 +35,39 @@ service cloud.firestore {
         (request.auth.token.role != null && (
           request.auth.token.role == 'SUPER_ADMIN' ||
           request.auth.token.role == 'Super Admin' ||
-          request.auth.token.role == 'Academy Manager'
+          request.auth.token.role == 'super_admin' ||
+          request.auth.token.role == 'Academy Manager' ||
+          request.auth.token.role == 'ACADEMY_MANAGER' ||
+          request.auth.token.role == 'academy_manager'
         )) ||
         hasSuperAdminUserDoc()
       );
+    }
+
+    function tenantDocExists(tenantId) {
+      return exists(/databases/$(database)/documents/tenants/$(tenantId));
+    }
+
+    function getTenantData(tenantId) {
+      return get(/databases/$(database)/documents/tenants/$(tenantId)).data;
+    }
+
+    function tenantUserDocExists(tenantId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/tenants/$(tenantId)/users/$(request.auth.uid));
+    }
+
+    function getTenantUserData(tenantId) {
+      return get(/databases/$(database)/documents/tenants/$(tenantId)/users/$(request.auth.uid)).data;
     }
 
     function isTenantProtectedSuperAdmin(tenantId) {
       return isSuperAdmin() || (
         isSignedIn() && request.auth.token.email != null && (
           (
-            exists(/databases/$(database)/documents/tenants/$(tenantId)) &&
-            'protectedSuperAdminEmails' in get(/databases/$(database)/documents/tenants/$(tenantId)).data &&
-            request.auth.token.email.lower() in get(/databases/$(database)/documents/tenants/$(tenantId)).data.protectedSuperAdminEmails
+            tenantDocExists(tenantId) &&
+            'protectedSuperAdminEmails' in getTenantData(tenantId) &&
+            request.auth.token.email.lower() in getTenantData(tenantId).protectedSuperAdminEmails
           ) ||
           (
             exists(/databases/$(database)/documents/academies/$(tenantId)) &&
@@ -60,44 +84,198 @@ service cloud.firestore {
              exists(/databases/$(database)/documents/academies/$(tenantId)/users/$(uid));
     }
 
+    function hasTenantRoleMapEntry(tenantId) {
+      return isSignedIn() &&
+        tenantDocExists(tenantId) &&
+        'roleMap' in getTenantData(tenantId) && (
+          request.auth.uid in getTenantData(tenantId).roleMap ||
+          (request.auth.token.email != null && request.auth.token.email.lower() in getTenantData(tenantId).roleMap)
+        );
+    }
+
+    function hasTenantMemberEmail(tenantId) {
+      return isSignedIn() &&
+        request.auth.token.email != null &&
+        tenantDocExists(tenantId) &&
+        'memberEmails' in getTenantData(tenantId) &&
+        request.auth.token.email.lower() in getTenantData(tenantId).memberEmails;
+    }
+
+    function hasTenantRole(tenantId, allowedRoles) {
+      return isSignedIn() && (
+        (
+          tenantUserDocExists(tenantId) && (
+            ('role' in getTenantUserData(tenantId) && getTenantUserData(tenantId).role in allowedRoles) ||
+            ('uiRole' in getTenantUserData(tenantId) && getTenantUserData(tenantId).uiRole in allowedRoles)
+          )
+        ) ||
+        (
+          tenantDocExists(tenantId) &&
+          'roleMap' in getTenantData(tenantId) && (
+            (request.auth.uid in getTenantData(tenantId).roleMap && getTenantData(tenantId).roleMap[request.auth.uid] in allowedRoles) ||
+            (request.auth.token.email != null && request.auth.token.email.lower() in getTenantData(tenantId).roleMap && getTenantData(tenantId).roleMap[request.auth.token.email.lower()] in allowedRoles)
+          )
+        )
+      );
+    }
+
     function isUserActive(tenantId) {
-      return isSignedIn();
+      return isSignedIn() && (
+        !tenantUserDocExists(tenantId) ||
+        !('active' in getTenantUserData(tenantId)) ||
+        getTenantUserData(tenantId).active != false
+      );
     }
 
     function belongsToTenant(tenantId) {
-      return isSignedIn() || isSuperAdmin() || isTenantProtectedSuperAdmin(tenantId) || userDocExists(tenantId, request.auth.uid);
+      return isSignedIn() && isUserActive(tenantId) && (
+        isSuperAdmin() ||
+        isTenantProtectedSuperAdmin(tenantId) ||
+        userDocExists(tenantId, request.auth.uid) ||
+        hasTenantRoleMapEntry(tenantId) ||
+        hasTenantMemberEmail(tenantId)
+      );
     }
 
     function isTenantMember(tenantId) {
-      return isSignedIn() || belongsToTenant(tenantId);
+      return belongsToTenant(tenantId);
     }
 
     function isTenantAdmin(tenantId) {
-      return isSignedIn() || isSuperAdmin() || isTenantProtectedSuperAdmin(tenantId);
+      return isSignedIn() && isUserActive(tenantId) && (
+        isSuperAdmin() ||
+        isTenantProtectedSuperAdmin(tenantId) ||
+        hasTenantRole(tenantId, [
+          'SUPER_ADMIN',
+          'Super Admin',
+          'super_admin',
+          'ACADEMY_MANAGER',
+          'Academy Manager',
+          'academy_manager'
+        ])
+      );
     }
 
     function canManageFinancials(tenantId) {
-      return isSignedIn() || isTenantAdmin(tenantId);
+      return isTenantAdmin(tenantId) || (
+        isSignedIn() && isUserActive(tenantId) &&
+        hasTenantRole(tenantId, [
+          'ACCOUNTANT',
+          'Accountant',
+          'accountant',
+          'BRANCH_MANAGER',
+          'Branch Manager',
+          'branch_manager'
+        ])
+      );
     }
 
     function canManageStaff(tenantId) {
-      return isSignedIn() || isTenantAdmin(tenantId);
+      return isTenantAdmin(tenantId) || (
+        isSignedIn() && isUserActive(tenantId) &&
+        hasTenantRole(tenantId, [
+          'BRANCH_MANAGER',
+          'Branch Manager',
+          'branch_manager',
+          'TECHNICAL_DIRECTOR',
+          'Technical Director',
+          'technical_director',
+          'ACCOUNTANT',
+          'Accountant',
+          'accountant'
+        ])
+      );
     }
 
     function canManageMerchandise(tenantId) {
-      return isSignedIn() || isTenantAdmin(tenantId);
+      return isTenantAdmin(tenantId) || (
+        isSignedIn() && isUserActive(tenantId) &&
+        hasTenantRole(tenantId, [
+          'BRANCH_MANAGER',
+          'Branch Manager',
+          'branch_manager',
+          'ACCOUNTANT',
+          'Accountant',
+          'accountant'
+        ])
+      );
     }
 
     function canManageOperations(tenantId) {
-      return isSignedIn() || isTenantAdmin(tenantId);
+      return isTenantAdmin(tenantId) || (
+        isSignedIn() && isUserActive(tenantId) &&
+        hasTenantRole(tenantId, [
+          'BRANCH_MANAGER',
+          'Branch Manager',
+          'branch_manager',
+          'TECHNICAL_DIRECTOR',
+          'Technical Director',
+          'technical_director',
+          'ACCOUNTANT',
+          'Accountant',
+          'accountant',
+          'PHYSIOTHERAPIST',
+          'Physiotherapist',
+          'physiotherapist',
+          'COACH',
+          'Coach',
+          'coach',
+          'STAFF',
+          'Staff',
+          'staff'
+        ])
+      );
     }
 
     function canManageCoaching(tenantId) {
-      return isSignedIn() || isTenantAdmin(tenantId);
+      return isTenantAdmin(tenantId) || (
+        isSignedIn() && isUserActive(tenantId) &&
+        hasTenantRole(tenantId, [
+          'BRANCH_MANAGER',
+          'Branch Manager',
+          'branch_manager',
+          'TECHNICAL_DIRECTOR',
+          'Technical Director',
+          'technical_director',
+          'COACH',
+          'Coach',
+          'coach'
+        ])
+      );
     }
 
     function canManageGroups(tenantId) {
-      return isSignedIn() || isTenantAdmin(tenantId);
+      return isTenantAdmin(tenantId) || (
+        isSignedIn() && isUserActive(tenantId) &&
+        hasTenantRole(tenantId, [
+          'BRANCH_MANAGER',
+          'Branch Manager',
+          'branch_manager',
+          'TECHNICAL_DIRECTOR',
+          'Technical Director',
+          'technical_director'
+        ])
+      );
+    }
+
+    function canAccessPhysioRecords(tenantId) {
+      return isTenantAdmin(tenantId) || (
+        isSignedIn() && isUserActive(tenantId) &&
+        hasTenantRole(tenantId, [
+          'PHYSIOTHERAPIST',
+          'Physiotherapist',
+          'physiotherapist',
+          'ACADEMY_MANAGER',
+          'Academy Manager',
+          'academy_manager',
+          'BRANCH_MANAGER',
+          'Branch Manager',
+          'branch_manager',
+          'SUPER_ADMIN',
+          'Super Admin',
+          'super_admin'
+        ])
+      );
     }
 
     function isGeogoOwner() {
@@ -108,31 +286,32 @@ service cloud.firestore {
     }
 
     // ----------------------------------------------------
-    // Root Users Collection (/users/{userId}) & CollectionGroup('users')
+    // Root Users Collection (/users/{userId})
     // ----------------------------------------------------
     match /users/{userId} {
-      allow read, write: if isSignedIn() || isSuperAdmin();
-    }
-
-    match /{path=**}/users/{userId} {
-      allow read, write: if isSignedIn() || isSuperAdmin();
+      allow read: if isSignedIn() && (request.auth.uid == userId || isSuperAdmin());
+      allow create, update: if isSuperAdmin() &&
+        !('password' in request.resource.data) &&
+        !('passwordHash' in request.resource.data);
+      allow delete: if isSuperAdmin();
     }
 
     // ----------------------------------------------------
     // Connection Health & Platform Console Collections
     // ----------------------------------------------------
     match /test/{docId} {
-      allow read, write: if isSignedIn() || isSuperAdmin();
+      allow read: if isSignedIn();
+      allow write: if isSuperAdmin();
     }
 
     match /platformClients/{clientId} {
-      allow read, write: if isSignedIn() || isSuperAdmin() || isGeogoOwner();
+      allow read, write: if isSuperAdmin() || isGeogoOwner();
     }
 
     match /master_console/{docId} {
-      allow read, write: if isSignedIn() || isSuperAdmin() || isGeogoOwner();
+      allow read, write: if isSuperAdmin() || isGeogoOwner();
       match /{subcollection=**} {
-        allow read, write: if isSignedIn() || isSuperAdmin() || isGeogoOwner();
+        allow read, write: if isSuperAdmin() || isGeogoOwner();
       }
     }
 
@@ -140,147 +319,189 @@ service cloud.firestore {
     // Tenant Root & Subcollections (/tenants/{tenantId})
     // ----------------------------------------------------
     match /tenants/{tenantId} {
-      // Allow pre-auth get for username lookup; full read/write for any authenticated user or Super Admin
-      allow get: if true;
-      allow list, create, update, delete: if isSignedIn() || isSuperAdmin();
+      // Tenant root document requires authenticated tenant membership for get, and tenant admin for updates (including roleMap)
+      allow get: if isTenantMember(tenantId);
+      allow list, create, delete: if isSuperAdmin() || isGeogoOwner();
+      allow update: if isTenantAdmin(tenantId);
 
       // Public Auth Lookup (usernameMap for bare-username login on new devices)
       match /public/{docId} {
         allow read: if true;
-        allow write: if isSignedIn() || isSuperAdmin();
+        allow write: if isTenantAdmin(tenantId);
       }
 
-      // Isolated Private Secrets
+      // Isolated Private Secrets (legacy path)
       match /private/{docId} {
-        allow read, write: if isSignedIn() || isSuperAdmin();
+        allow read, write: if isTenantAdmin(tenantId);
       }
 
-      // Settings (appearance, lists, custom config)
+      // Isolated Settings Secrets (/tenants/{tenantId}/settings/secrets)
+      match /settings/secrets {
+        allow read, write: if isTenantAdmin(tenantId);
+      }
+
+      // Settings (appearance, lists, custom config — excluding secrets)
       match /settings/{settingId} {
-        allow read, write: if isSignedIn() || isSuperAdmin();
+        allow read: if settingId != 'secrets' && isTenantMember(tenantId);
+        allow write: if settingId != 'secrets' && isTenantAdmin(tenantId);
       }
 
       // Meta (academy info, branding)
       match /meta/{metaId} {
-        allow read, write: if isSignedIn() || isSuperAdmin();
+        allow read: if isTenantMember(tenantId);
+        allow write: if isTenantAdmin(tenantId);
       }
 
-      // Users Collection & Role Enforcement
+      // Users Collection & Role Enforcement (no password or passwordHash exposure)
       match /users/{userId} {
-        allow read, write: if isSignedIn() || isSuperAdmin();
+        allow read: if isTenantMember(tenantId);
+        allow create, update: if isTenantAdmin(tenantId) &&
+          !('password' in request.resource.data) &&
+          !('passwordHash' in request.resource.data);
+        allow delete: if isTenantAdmin(tenantId);
       }
 
       // Custom Roles & Permissions
       match /customRoles/{roleId} {
-        allow read, write: if isSignedIn() || isSuperAdmin();
+        allow read: if isTenantMember(tenantId);
+        allow write: if isTenantAdmin(tenantId);
       }
 
       // Financial Ledger (Accounting transactions)
       match /ledger/{entryId} {
-        allow read, write: if isSignedIn() || canManageFinancials(tenantId);
+        allow read, write: if canManageFinancials(tenantId);
       }
 
       // Billing & Invoices
       match /invoices/{invoiceId} {
-        allow read, write: if isSignedIn() || canManageFinancials(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageFinancials(tenantId) || canManageOperations(tenantId);
       }
 
       // Staff Directory
       match /staff/{staffId} {
-        allow read, write: if isSignedIn() || canManageStaff(tenantId);
+        allow read, write: if canManageStaff(tenantId);
       }
 
       // Merchandise & Inventory
       match /stock/{itemId} {
-        allow read, write: if isSignedIn() || canManageMerchandise(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageMerchandise(tenantId) || canManageOperations(tenantId);
       }
       match /orders/{orderId} {
-        allow read, write: if isSignedIn() || canManageMerchandise(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageMerchandise(tenantId) || canManageOperations(tenantId);
       }
       match /suppliers/{supplierId} {
-        allow read, write: if isSignedIn() || canManageMerchandise(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageMerchandise(tenantId);
       }
 
       // Branches, Teams, Players, Coaches
       match /branches/{branchId} {
-        allow read, write: if isSignedIn() || isTenantMember(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageOperations(tenantId);
       }
       match /teams/{teamId} {
-        allow read, write: if isSignedIn() || canManageOperations(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageOperations(tenantId);
       }
       match /players/{playerId} {
-        allow read, write: if isSignedIn() || canManageOperations(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageOperations(tenantId);
       }
       match /crmLeads/{leadId} {
-        allow read, write: if isSignedIn() || canManageOperations(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageOperations(tenantId);
       }
       match /coaches/{coachId} {
-        allow read, write: if isSignedIn() || canManageOperations(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow create, update: if (canManageStaff(tenantId) || canManageOperations(tenantId)) &&
+          !('password' in request.resource.data) &&
+          !('passwordHash' in request.resource.data);
+        allow delete: if canManageStaff(tenantId) || isTenantAdmin(tenantId);
       }
 
       // Training: Sessions, Plans, Drills, Attendance
       match /sessions/{sessionId} {
-        allow read, write: if isSignedIn() || canManageCoaching(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageCoaching(tenantId) || canManageOperations(tenantId);
       }
       match /plans/{planId} {
-        allow read, write: if isSignedIn() || canManageCoaching(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageCoaching(tenantId);
       }
       match /drills/{drillId} {
-        allow read, write: if isSignedIn() || canManageCoaching(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageCoaching(tenantId);
       }
       match /attendance/{sessionId} {
-        allow read, write: if isSignedIn() || canManageCoaching(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageCoaching(tenantId) || canManageOperations(tenantId);
       }
 
       // Notifications, Logs, Groups, Resources, Workshops, Evaluations, Telemetry
       match /notifications/{notificationId} {
-        allow read, write: if isSignedIn() || isTenantMember(tenantId);
+        allow read, write: if isTenantMember(tenantId);
       }
       match /audit_logs/{logId} {
-        allow read, write: if isSignedIn() || isSuperAdmin();
+        allow read: if isTenantAdmin(tenantId);
+        allow create, update: if isTenantMember(tenantId);
+        allow delete: if isTenantAdmin(tenantId);
       }
       match /cron_logs/{logId} {
-        allow read, write: if isSignedIn() || isSuperAdmin();
+        allow read: if isTenantAdmin(tenantId);
+        allow create, update: if isTenantMember(tenantId);
+        allow delete: if isTenantAdmin(tenantId);
       }
       match /groups/{groupId} {
-        allow read, write: if isSignedIn() || canManageGroups(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageGroups(tenantId);
       }
       match /resourceFolders/{folderId} {
-        allow read, write: if isSignedIn() || canManageCoaching(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageCoaching(tenantId);
       }
       match /workshops/{workshopId} {
-        allow read, write: if isSignedIn() || canManageCoaching(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageCoaching(tenantId);
       }
       match /evaluations/{evalId} {
-        allow read, write: if isSignedIn() || canManageCoaching(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageCoaching(tenantId);
       }
       match /frequencyProposals/{propId} {
-        allow read, write: if isSignedIn() || canManageCoaching(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageCoaching(tenantId);
       }
       match /errorLogs/{logId} {
-        allow read, write: if isSignedIn() || isSuperAdmin();
+        allow read: if isTenantAdmin(tenantId);
+        allow create, update: if isTenantMember(tenantId);
+        allow delete: if isTenantAdmin(tenantId);
       }
 
-      // UP ERP Ecosystem Subcollections (Court Reservations, Gym & Strength, Physio & Medical, Kiosk POS)
+      // Vescio Nexus Subcollections (Court Reservations, Slot Locks, Gym & Strength, Physio & Medical, Kiosk POS)
       match /courtReservations/{reservationId} {
-        allow read, write: if isSignedIn() || canManageOperations(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageOperations(tenantId);
+      }
+      match /courtSlotLocks/{lockId} {
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageOperations(tenantId);
       }
       match /gymMembers/{memberId} {
-        allow read, write: if isSignedIn() || canManageOperations(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageOperations(tenantId);
       }
       match /physioRecords/{recordId} {
-        allow read, write: if isSignedIn() || canManageOperations(tenantId);
+        allow read, write: if canAccessPhysioRecords(tenantId);
       }
       match /posCatalog/{itemId} {
-        allow read, write: if isSignedIn() || canManageMerchandise(tenantId);
+        allow read: if isTenantMember(tenantId);
+        allow write: if canManageMerchandise(tenantId) || canManageOperations(tenantId);
       }
       match /posTransactions/{txId} {
-        allow read, write: if isSignedIn() || canManageFinancials(tenantId);
-      }
-
-      // Catch-all for any additional tenant subcollections in staging
-      match /{subcollection}/{docId=**} {
-        allow read, write: if isSignedIn() || isSuperAdmin();
+        allow read, write: if canManageFinancials(tenantId) || canManageMerchandise(tenantId);
       }
     }
 
@@ -288,11 +509,12 @@ service cloud.firestore {
     // Academy Root & Subcollections (/academies/{tenantId})
     // ----------------------------------------------------
     match /academies/{tenantId} {
-      allow get: if true;
-      allow list, create, update, delete: if isSignedIn() || isSuperAdmin();
+      allow get: if isTenantMember(tenantId);
+      allow list, create, update, delete: if isTenantAdmin(tenantId);
 
       match /{subcollection}/{docId=**} {
-        allow read, write: if isSignedIn() || isSuperAdmin();
+        allow read: if isTenantMember(tenantId);
+        allow write: if isTenantAdmin(tenantId);
       }
     }
   }

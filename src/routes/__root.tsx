@@ -163,6 +163,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 });
 
 function RootShell({ children }: { children: ReactNode }) {
+  const isDevMode = Boolean(import.meta.env.DEV);
   return (
     <html lang="en" suppressHydrationWarning>
       <head suppressHydrationWarning>
@@ -172,11 +173,30 @@ function RootShell({ children }: { children: ReactNode }) {
             __html: `
               try {
                 if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
-                  window.addEventListener('load', function() {
-                    navigator.serviceWorker.register('/sw.js').then(function(reg) {
-                      try { reg.update(); } catch (e) {}
+                  var host = window.location.hostname || '';
+                  var isPreviewOrDev = ${isDevMode ? "true" : "false"} || host.indexOf('run.app') !== -1 || host === 'localhost' || host === '127.0.0.1';
+                  if (isPreviewOrDev) {
+                    navigator.serviceWorker.getRegistrations().then(function(regs) {
+                      for (var i = 0; i < regs.length; i++) {
+                        try { regs[i].unregister().catch(function() {}); } catch (e) {}
+                      }
                     }).catch(function() {});
-                  });
+                  } else {
+                    window.addEventListener('load', function() {
+                      fetch('/sw.js', { method: 'HEAD', cache: 'no-store' })
+                        .then(function(res) {
+                          var ct = (res && res.headers && res.headers.get('content-type')) || '';
+                          if (res && res.ok && ct.toLowerCase().indexOf('javascript') !== -1) {
+                            return navigator.serviceWorker.register('/sw.js').then(function(reg) {
+                              if (reg && typeof reg.update === 'function') {
+                                Promise.resolve(reg.update()).catch(function() {});
+                              }
+                            });
+                          }
+                        })
+                        .catch(function() {});
+                    });
+                  }
                 }
 
                 var stored = window.localStorage.getItem("vv-theme");
@@ -209,6 +229,26 @@ import { DevDiagnosticsPill } from "@/components/dev-diagnostics-pill";
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+    const host = window.location.hostname || "";
+    const isPreviewOrDev =
+      import.meta.env.DEV ||
+      host.includes("run.app") ||
+      host === "localhost" ||
+      host === "127.0.0.1";
+    if (!isPreviewOrDev) return;
+
+    (async () => {
+      try {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((reg) => reg.unregister().catch(() => false)));
+      } catch {
+        /* Silently ignore stale serviceWorker cleanup errors */
+      }
+    })();
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>

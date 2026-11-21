@@ -4,23 +4,15 @@ import {
   ArrowLeft,
   Building2,
   Calendar,
-  CreditCard,
   Dumbbell,
   Edit3,
   HeartPulse,
   Layers,
   MapPin,
-  Minus,
-  Plus,
-  Printer,
-  Search,
   Settings,
-  ShoppingBag,
   ShoppingCart,
   Sparkles,
   Trash2,
-  UserCheck,
-  Users,
   Wallet,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -33,33 +25,23 @@ import {
   Modal,
   Panel,
   Select,
-  Stat,
-  Table,
-  Td,
-  Textarea,
-  Th,
   money,
 } from "@/components/kit";
 import { NexusCourtReservationsModule } from "@/components/nexus-court-reservations";
+import { NexusGymModule } from "@/components/nexus-gym-module";
+import { NexusPhysioModule } from "@/components/nexus-physio-module";
+import { NexusPosModule } from "@/components/nexus-pos-module";
 import { VescioNexusIcon } from "@/components/vescio-nexus-icon";
 import {
   DEFAULT_POS_CATALOG,
+  projectCourtReservationsForDate,
   todayISO,
   uid,
   useDB,
   useTenantUser,
   type Branch,
   type Court,
-  type GymMember,
-  type GymWorkoutLog,
-  type LedgerEntry,
-  type PhysioRecord,
-  type PhysioTreatmentSession,
-  type PlayerMedicalClearanceStatus,
-  type PosCartLineItem,
   type PosCatalogItem,
-  type PosItemCategory,
-  type PosTransaction,
 } from "@/lib/data-store";
 
 export const Route = createFileRoute("/up-erp")({
@@ -78,39 +60,6 @@ export const Route = createFileRoute("/up-erp")({
 
 type VescioNexusModuleTab = "hub" | "branches" | "courts" | "gym" | "physio" | "pos";
 
-const RTP_STAGES: Array<{
-  stage: 1 | 2 | 3 | 4 | 5;
-  title: string;
-  subtitle: string;
-}> = [
-  { stage: 1, title: "Stage 1 · Acute & Pain Control", subtitle: "Rest, cryo, edema reduction" },
-  {
-    stage: 2,
-    title: "Stage 2 · Mobility & Early Load",
-    subtitle: "ROM restoration, isometric load",
-  },
-  {
-    stage: 3,
-    title: "Stage 3 · Strength & Agility",
-    subtitle: "Eccentric strength, linear running",
-  },
-  { stage: 4, title: "Stage 4 · Non-Contact Drills", subtitle: "Modified court drills, cutting" },
-  {
-    stage: 5,
-    title: "Stage 5 · Full Contact Cleared",
-    subtitle: "Cleared for 5v5 & official games",
-  },
-];
-
-const POS_CATEGORIES: Array<"All" | PosItemCategory> = [
-  "All",
-  "Hydration & Drinks",
-  "Snacks & Nutrition",
-  "Uniforms & Merch",
-  "Court Walk-In & Passes",
-  "Recovery & Tape",
-];
-
 function addDaysToIso(isoDate: string, days: number): string {
   const parts = isoDate.split("-").map(Number);
   if (parts.length !== 3 || parts.some(Number.isNaN)) return isoDate;
@@ -128,7 +77,7 @@ type BranchDraftCourt = {
 };
 
 function VescioNexusHub() {
-  const { db, setEntity, patchEntity, deleteEntity } = useDB();
+  const { db, setEntity, cascadeBranchAndCourtRename } = useDB();
   const currentUser = useTenantUser();
 
   const [activeModule, setActiveModule] = useState<VescioNexusModuleTab>("hub");
@@ -146,6 +95,8 @@ function VescioNexusHub() {
   );
   const posTransactions = useMemo(() => db.posTransactions || [], [db.posTransactions]);
 
+  const ledger = useMemo(() => db.ledger || [], [db.ledger]);
+
   const defaultBranchName = branches[0]?.name || "Main Branch";
   const activeScopedBranchName = branchFilter !== "All" ? branchFilter : defaultBranchName;
 
@@ -154,6 +105,15 @@ function VescioNexusHub() {
       branches.find((b) => (b.name || "").toLowerCase() === activeScopedBranchName.toLowerCase()) ||
       branches[0],
     [branches, activeScopedBranchName],
+  );
+
+  // Scoped branches list (either all branches or the single selected branch)
+  const scopedBranches = useMemo(
+    () =>
+      branchFilter === "All"
+        ? branches
+        : branches.filter((b) => (b.name || "").toLowerCase() === branchFilter.toLowerCase()),
+    [branches, branchFilter],
   );
 
   // Filtered datasets by branch
@@ -172,7 +132,9 @@ function VescioNexusHub() {
     () =>
       gymMembers.filter(
         (m) =>
-          branchFilter === "All" || (m.branch || "").toLowerCase() === branchFilter.toLowerCase(),
+          branchFilter === "All" ||
+          m.branchAccess === "All Branches" ||
+          (m.branch || "").toLowerCase() === branchFilter.toLowerCase(),
       ),
     [gymMembers, branchFilter],
   );
@@ -198,10 +160,116 @@ function VescioNexusHub() {
     [posTransactions, branchFilter],
   );
 
-  // Global Vescio Nexus KPIs
+  const filteredLedger = useMemo(
+    () =>
+      ledger.filter(
+        (l) =>
+          branchFilter === "All" ||
+          !l.branch ||
+          l.branch.toLowerCase() === branchFilter.toLowerCase(),
+      ),
+    [ledger, branchFilter],
+  );
+
+  // Merge POS Catalog with live Academy Merchandise Stock items (scoped by selected branch)
+  const unifiedPosCatalog = useMemo<PosCatalogItem[]>(() => {
+    const baseItems = posCatalog.filter((c) => {
+      if (c.active === false) return false;
+      if (
+        branchFilter !== "All" &&
+        c.branch &&
+        c.branch !== "All" &&
+        c.branch.toLowerCase() !== branchFilter.toLowerCase()
+      ) {
+        return false;
+      }
+      return true;
+    });
+    const linkedStockIds = new Set(baseItems.map((b) => b.linkedStockId).filter(Boolean));
+    const stockMapped: PosCatalogItem[] = stock
+      .filter((s) => {
+        if (linkedStockIds.has(s.id)) return false;
+        if (
+          branchFilter !== "All" &&
+          s.branch &&
+          s.branch !== "All" &&
+          s.branch.toLowerCase() !== branchFilter.toLowerCase()
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .map((s) => ({
+        id: `stock-pos-${s.id}`,
+        name: `${s.item}${s.variant ? ` (${s.variant})` : ""}`,
+        category: "Uniforms & Merch" as const,
+        price: Number(s.sellingPrice ?? s.price) || 25,
+        stock: Number(s.stock) || 0,
+        lowStockThreshold: Number(s.reorder) || 5,
+        sku: `STK-${s.id.slice(-4).toUpperCase()}`,
+        linkedStockId: s.id,
+        branch: s.branch,
+        active: true,
+      }));
+    return [...baseItems, ...stockMapped];
+  }, [posCatalog, stock, branchFilter]);
+
+  // =========================================================================
+  // LIVE CROSS-MODULE KPI ENGINE & UNIFIED OPERATIONS FEED
+  // =========================================================================
   const ecosystemKpis = useMemo(() => {
     const today = todayISO();
+    const sevenDaysOut = addDaysToIso(today, 7);
+
+    // 1. COURTS & FACILITY RESERVATIONS METRICS (including active Continuous Weekly projections)
     const activeReservations = filteredReservations.filter((r) => r.status !== "Cancelled");
+    const todayCourtBookings = projectCourtReservationsForDate(today, activeReservations, {
+      branchFilter,
+      branches: scopedBranches,
+    });
+
+    const upcomingHorizonProjected = Array.from({ length: 14 }, (_, offset) => {
+      const targetIso = addDaysToIso(today, offset);
+      return projectCourtReservationsForDate(targetIso, activeReservations, {
+        branchFilter,
+        branches: scopedBranches,
+      });
+    }).flat();
+
+    const projectedIdSet = new Set(upcomingHorizonProjected.map((r) => r.id));
+    const beyondHorizonConcrete = activeReservations.filter(
+      (r) => r.date > addDaysToIso(today, 13) && !projectedIdSet.has(r.id),
+    );
+    const upcomingCourtBookings = [...upcomingHorizonProjected, ...beyondHorizonConcrete].sort(
+      (a, b) => `${a.date}T${a.startTime}`.localeCompare(`${b.date}T${b.startTime}`),
+    );
+
+    const todayFullCourtCount = todayCourtBookings.filter(
+      (r) => r.courtAllocation === "Full Court",
+    ).length;
+    const todayHcaCount = todayCourtBookings.filter(
+      (r) => r.courtAllocation === "Half Court - HCA",
+    ).length;
+    const todayHcbCount = todayCourtBookings.filter(
+      (r) => r.courtAllocation === "Half Court - HCB",
+    ).length;
+
+    const totalConfiguredCourts = Math.max(
+      1,
+      scopedBranches.reduce((acc, b) => acc + (b.courts?.length || b.courtsCount || 1), 0),
+    );
+    // Calculate court utilization % based on Full Court equivalent hours booked today vs 14 operating hrs/court
+    const todayEquivalentFullCourtHours = todayCourtBookings.reduce((sum, r) => {
+      const hrs = Math.max(0.25, Number(r.durationHours) || 1);
+      const weight = r.courtAllocation === "Full Court" ? 1 : 0.5;
+      return sum + hrs * weight;
+    }, 0);
+    const availableCourtHoursToday = totalConfiguredCourts * 14;
+    const courtUtilizationPct = Math.min(
+      100,
+      Math.round((todayEquivalentFullCourtHours / Math.max(1, availableCourtHoursToday)) * 100),
+    );
+
     const courtRevenueCollected = activeReservations.reduce(
       (sum, r) => sum + (Number(r.paidAmount) || 0),
       0,
@@ -210,13 +278,94 @@ function VescioNexusHub() {
       (sum, r) => sum + Math.max(0, (Number(r.totalAmount) || 0) - (Number(r.paidAmount) || 0)),
       0,
     );
+    const todayCourtRevenueFromBookings = activeReservations
+      .filter((r) => r.date === today || (r.cashedInAt && r.cashedInAt.slice(0, 10) === today))
+      .reduce((sum, r) => sum + (Number(r.paidAmount) || 0), 0);
+    const todayCourtRevenueFromLedger = filteredLedger
+      .filter(
+        (l) =>
+          l.date === today &&
+          l.type === "Revenue" &&
+          l.status !== "Pending" &&
+          ((l.category || "").toLowerCase().includes("court") ||
+            (l.account || "").toLowerCase().includes("court")),
+      )
+      .reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
+    const todayCourtRevenue = Math.max(todayCourtRevenueFromBookings, todayCourtRevenueFromLedger);
 
-    const activeGymCount = filteredGymMembers.filter((m) => m.status === "Active").length;
-    const todayGymCheckIns = filteredGymMembers.filter((m) => m.lastCheckInDate === today).length;
-    const gymMonthlyRevenue = filteredGymMembers
-      .filter((m) => m.status === "Active")
+    // Active & Upcoming Off Days across scoped branches
+    const activeOffDays = scopedBranches
+      .flatMap((b) =>
+        (b.offDays || []).map((od) => ({
+          ...od,
+          branchName: b.name,
+        })),
+      )
+      .filter((od) => od.date >= today)
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    // 2. GYM & STRENGTH METRICS
+    const activeGymMembers = filteredGymMembers.filter((m) => m.status === "Active");
+    const activeGymCount = activeGymMembers.length;
+
+    const scopedGymCoaches = scopedBranches.flatMap((b) => b.gymCoaches || []);
+    const activeCoachPoolsCount = scopedGymCoaches.filter(
+      (c) => c.isClientEnabled && (c.sessionsRemaining || 0) > 0,
+    ).length;
+
+    const scopedGymScheduleSlots = scopedBranches.flatMap((b) => b.gymBookings || []);
+    const todayGymSlotsCheckedIn = scopedGymScheduleSlots.filter(
+      (s) => s.date === today && (s.status === "Checked In" || s.status === "Completed"),
+    ).length;
+
+    const memberCheckInsTodayCount = filteredGymMembers.reduce((sum, m) => {
+      const histCount = (m.checkInHistory || []).filter((h) => h.date === today).length;
+      if (histCount > 0) return sum + histCount;
+      return sum + (m.lastCheckInDate === today ? 1 : 0);
+    }, 0);
+    const coachPoolCheckInsTodayCount = scopedGymCoaches.reduce(
+      (sum, c) => sum + (c.checkInHistory || []).filter((h) => h.date === today).length,
+      0,
+    );
+    const todayGymCheckIns = Math.max(
+      todayGymSlotsCheckedIn,
+      memberCheckInsTodayCount + coachPoolCheckInsTodayCount,
+    );
+
+    const gymMonthlyRevenue = activeGymMembers.reduce(
+      (sum, m) => sum + (Number(m.monthlyFee) || 0),
+      0,
+    );
+
+    const todayGymRevenueFromLedger = filteredLedger
+      .filter(
+        (l) =>
+          l.date === today &&
+          l.type === "Revenue" &&
+          l.status !== "Pending" &&
+          ((l.category || "").toLowerCase().includes("gym") ||
+            (l.account || "").toLowerCase().includes("gym")),
+      )
+      .reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
+    const todayGymRevenueFromEnrollments = filteredGymMembers
+      .filter((m) => m.startDate === today && (m.balance || 0) === 0)
       .reduce((sum, m) => sum + (Number(m.monthlyFee) || 0), 0);
+    const todayGymRevenue = Math.max(todayGymRevenueFromLedger, todayGymRevenueFromEnrollments);
 
+    // Expiring or low-session gym packages
+    const expiringGymPackages = filteredGymMembers
+      .filter((m) => {
+        if (m.status === "Expired") return true;
+        const lowSessions =
+          typeof m.sessionsRemaining === "number" &&
+          (m.totalSessionsIncluded ?? 0) < 900 &&
+          m.sessionsRemaining <= 2;
+        const expiringSoon = Boolean(m.expiryDate && m.expiryDate <= sevenDaysOut);
+        return lowSessions || expiringSoon;
+      })
+      .sort((a, b) => (a.expiryDate || "").localeCompare(b.expiryDate || ""));
+
+    // 3. PHYSIOTHERAPY & MEDICAL METRICS
     const scopedPlayers = players.filter(
       (p) =>
         branchFilter === "All" || (p.branch || "").toLowerCase() === branchFilter.toLowerCase(),
@@ -225,36 +374,209 @@ function VescioNexusHub() {
       (p) => p.medicalStatus === "Injured" || p.medicalStatus === "Limited",
     ).length;
     const activeRehabCases = filteredPhysioRecords.filter(
-      (r) => r.medicalStatus !== "Fit" || r.rtpStage < 5,
+      (r) => r.caseStatus !== "Discharged" && (r.medicalStatus !== "Fit" || r.rtpStage < 5),
     ).length;
 
-    const todayPosSales = filteredPosTransactions
-      .filter((tx) => tx.date === today && tx.status === "Completed")
-      .reduce((sum, tx) => sum + (Number(tx.total) || 0), 0);
+    const branchPhysioAppointments = scopedBranches
+      .flatMap((b) =>
+        (b.physioAppointments || []).map((appt) => ({
+          ...appt,
+          branch: appt.branch || b.name,
+        })),
+      )
+      .filter((a) => a.status !== "Cancelled");
+
+    const todayPhysioAppointments = branchPhysioAppointments
+      .filter((a) => a.date === today)
+      .sort((a, b) => a.startTime.localeCompare(b.startTime));
+
+    const todayRecordSessions = filteredPhysioRecords.flatMap((rec) =>
+      (rec.treatmentSessions || [])
+        .filter((s) => s.date === today && s.status !== "Cancelled")
+        .map((s) => ({
+          id: s.id,
+          branch: rec.branch,
+          patientName: rec.patientName,
+          practitionerName: s.therapistName || rec.therapistName,
+          roomName: s.roomName || "Treatment Room 1",
+          date: s.date,
+          startTime: s.time || "09:00",
+          endTime: s.endTime || "09:45",
+          modality: s.modality,
+          status: s.status || "Completed",
+          fee: s.fee,
+          paymentStatus: s.paymentStatus,
+        })),
+    );
+
+    // Unified today's physio sessions list (deduplicated by appointment ID)
+    const seenApptIds = new Set(todayPhysioAppointments.map((a) => a.id));
+    const unifiedTodayPhysioSessions = [
+      ...todayPhysioAppointments.map((a) => ({
+        id: a.id,
+        branch: a.branch,
+        patientName: a.patientName,
+        practitionerName: a.practitionerName,
+        roomName: a.roomName || "Treatment Room 1",
+        date: a.date,
+        startTime: a.startTime,
+        endTime: a.endTime,
+        modality: a.modality,
+        status: a.status,
+        fee: a.fee,
+        paymentStatus: a.paymentStatus,
+      })),
+      ...todayRecordSessions.filter((s) => !seenApptIds.has(s.id)),
+    ].sort((a, b) => a.startTime.localeCompare(b.startTime));
+
+    const todayPhysioApptsCount = unifiedTodayPhysioSessions.length;
+
+    const totalPhysioRooms = Math.max(
+      1,
+      scopedBranches.reduce(
+        (acc, b) => acc + (b.physioRooms?.length || b.physioRoomsCount || 2),
+        0,
+      ),
+    );
+    // Calculate room utilization % (based on distinct rooms used or session slots vs 8 daily slots/room)
+    const distinctRoomsUsedToday = new Set(
+      unifiedTodayPhysioSessions.map((s) => `${s.branch}::${s.roomName}`),
+    ).size;
+    const slotBasedRoomUtil = Math.round(
+      (todayPhysioApptsCount / Math.max(1, totalPhysioRooms * 6)) * 100,
+    );
+    const activeRoomOccupancyPct =
+      todayPhysioApptsCount > 0
+        ? Math.max(
+            slotBasedRoomUtil,
+            Math.round((distinctRoomsUsedToday / Math.max(1, totalPhysioRooms)) * 100),
+          )
+        : 0;
+    const physioRoomUtilizationPct = Math.min(100, activeRoomOccupancyPct);
+
+    const todayPhysioRevenueFromSessions = unifiedTodayPhysioSessions
+      .filter((s) => s.paymentStatus === "Paid")
+      .reduce((sum, s) => sum + (Number(s.fee) || 0), 0);
+    const todayPhysioRevenueFromLedger = filteredLedger
+      .filter(
+        (l) =>
+          l.date === today &&
+          l.type === "Revenue" &&
+          l.status !== "Pending" &&
+          ((l.category || "").toLowerCase().includes("physio") ||
+            (l.account || "").toLowerCase().includes("physio")),
+      )
+      .reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
+    const todayPhysioRevenue = Math.max(
+      todayPhysioRevenueFromSessions,
+      todayPhysioRevenueFromLedger,
+    );
+
+    // 4. KIOSK POS & INVENTORY METRICS
+    const todayCompletedPosTxs = filteredPosTransactions.filter(
+      (tx) => tx.date === today && tx.status === "Completed",
+    );
+    const todayPosSales = todayCompletedPosTxs.reduce(
+      (sum, tx) => sum + (Number(tx.total) || 0),
+      0,
+    );
+    const todayPosTxCount = todayCompletedPosTxs.length;
     const totalPosSales = filteredPosTransactions
       .filter((tx) => tx.status === "Completed")
       .reduce((sum, tx) => sum + (Number(tx.total) || 0), 0);
 
+    const lowStockPosItems = unifiedPosCatalog
+      .filter((item) => {
+        const threshold = item.lowStockThreshold ?? 10;
+        if (threshold <= 0 || item.stock >= 900) return false;
+        return item.stock <= threshold;
+      })
+      .sort((a, b) => a.stock - b.stock);
+
+    const lowStockAlertsCount = lowStockPosItems.length;
+
+    // 5. TODAY'S TOTAL VESCIO NEXUS REVENUE (Combined across all 4 pillars)
+    const todayTotalNexusRevenue =
+      Math.round((todayCourtRevenue + todayGymRevenue + todayPhysioRevenue + todayPosSales) * 100) /
+      100;
+
     return {
+      today,
+      todayTotalNexusRevenue,
+      todayCourtRevenue,
+      todayGymRevenue,
+      todayPhysioRevenue,
+      todayPosSales,
+      todayPosTxCount,
+      totalPosSales,
       activeReservationsCount: activeReservations.length,
+      todayCourtBookingsCount: todayCourtBookings.length,
+      todayFullCourtCount,
+      todayHcaCount,
+      todayHcbCount,
+      totalConfiguredCourts,
+      courtUtilizationPct,
       courtRevenueCollected,
       courtPendingReceivables,
       activeGymCount,
+      activeCoachPoolsCount,
       todayGymCheckIns,
       gymMonthlyRevenue,
       injuredOrLimitedPlayers,
       activeRehabCases,
-      todayPosSales,
-      totalPosSales,
+      todayPhysioApptsCount,
+      totalPhysioRooms,
+      physioRoomUtilizationPct,
+      lowStockAlertsCount,
+      // Feed collections
+      todayCourtBookings,
+      upcomingCourtBookings,
+      unifiedTodayPhysioSessions,
+      expiringGymPackages,
+      lowStockPosItems,
+      activeOffDays,
     };
   }, [
     filteredReservations,
     filteredGymMembers,
     filteredPhysioRecords,
     filteredPosTransactions,
+    filteredLedger,
+    unifiedPosCatalog,
+    scopedBranches,
     players,
     branchFilter,
   ]);
+
+  // Daily Register Summary for POS
+  const posDailyRegister = useMemo(() => {
+    const today = todayISO();
+    const todayTxs = filteredPosTransactions.filter(
+      (t) => t.date === today && t.status === "Completed",
+    );
+    const cashTotal = todayTxs.reduce((s, t) => {
+      if (t.paymentMethod === "Cash") return s + t.total;
+      if (t.paymentMethod === "Split Payment") return s + (Number(t.splitCashAmount) || 0);
+      return s;
+    }, 0);
+    const cardTotal = todayTxs.reduce((s, t) => {
+      if (t.paymentMethod === "Card") return s + t.total;
+      if (t.paymentMethod === "Split Payment") return s + (Number(t.splitCardAmount) || 0);
+      return s;
+    }, 0);
+    const accountChargeTotal = todayTxs.reduce((s, t) => {
+      if (t.paymentMethod === "Charge to Account") return s + t.total;
+      if (t.paymentMethod === "Split Payment") return s + (Number(t.splitAccountAmount) || 0);
+      return s;
+    }, 0);
+    return {
+      count: todayTxs.length,
+      cashTotal: Math.round(cashTotal * 100) / 100,
+      cardTotal: Math.round(cardTotal * 100) / 100,
+      accountChargeTotal: Math.round(accountChargeTotal * 100) / 100,
+      grandTotal: Math.round((cashTotal + cardTotal + accountChargeTotal) * 100) / 100,
+    };
+  }, [filteredPosTransactions]);
 
   // =========================================================================
   // NEXUS BRANCHES MANAGEMENT STATE & CRUD
@@ -385,7 +707,7 @@ function VescioNexusHub() {
     setBranchModalOpen(true);
   };
 
-  const handleSaveNexusBranch = async () => {
+  const handleSaveBranch = async () => {
     if (!branchForm.name.trim()) {
       toast.error("Please enter a branch name.");
       return;
@@ -394,18 +716,37 @@ function VescioNexusHub() {
       ? branches.find((b) => b.id === editingBranchId)
       : undefined;
 
+    const courtRenames: Record<string, string> = {};
+    const preservedOldCourtIds = new Set<string>();
+    const preservedOldCourtNamesLower = new Set<string>();
+
     const normalizedCourts: Court[] =
       branchForm.courts.length > 0
         ? branchForm.courts.map((c, idx) => {
-            const prevCourt = existingBranch?.courts?.find(
-              (pc) => pc.id === c.id || pc.name === c.name,
-            );
+            const byId = existingBranch?.courts?.find((pc) => pc.id && pc.id === c.id);
+            const byName = !byId
+              ? existingBranch?.courts?.find(
+                  (pc) => pc.name.trim().toLowerCase() === c.name.trim().toLowerCase(),
+                )
+              : undefined;
+            const prevCourt = byId || byName;
+            const nextCourtName = c.name.trim() || `Court ${idx + 1}`;
+            if (prevCourt) {
+              if (prevCourt.id) preservedOldCourtIds.add(prevCourt.id);
+              preservedOldCourtNamesLower.add(prevCourt.name.trim().toLowerCase());
+              if (
+                prevCourt.name.trim() &&
+                prevCourt.name.trim().toLowerCase() !== nextCourtName.toLowerCase()
+              ) {
+                courtRenames[prevCourt.name.trim()] = nextCourtName;
+              }
+            }
             const fullRate = Math.max(0, Number(c.fullCourtHourlyRate) || 60);
             const halfRate = Math.max(0, Number(c.halfCourtHourlyRate) || 35);
             return {
               ...prevCourt,
               id: c.id || uid(`crt-${idx}`),
-              name: c.name.trim() || `Court ${idx + 1}`,
+              name: nextCourtName,
               contact: prevCourt?.contact || branchForm.manager.trim() || "Facility Desk",
               phone: prevCourt?.phone || branchForm.phone.trim() || "",
               operatingHours: c.operatingHours.trim() || branchForm.operatingHours.trim(),
@@ -430,6 +771,15 @@ function VescioNexusHub() {
               feeAmount: 60,
             },
           ];
+
+    const removedCourtNames: string[] = (existingBranch?.courts || [])
+      .filter((pc) => {
+        const matchedById = Boolean(pc.id && preservedOldCourtIds.has(pc.id));
+        const matchedByName = preservedOldCourtNamesLower.has(pc.name.trim().toLowerCase());
+        return !matchedById && !matchedByName;
+      })
+      .map((pc) => pc.name.trim())
+      .filter(Boolean);
 
     const branchRecord: Branch = {
       ...(existingBranch || {
@@ -459,805 +809,46 @@ function VescioNexusHub() {
       posStatus: branchForm.posStatus,
     };
 
-    await setEntity("branches", branchRecord);
-    setBranchFilter(branchRecord.name);
-    setBranchModalOpen(false);
-    toast.success(
-      editingBranchId
-        ? `Updated Nexus Branch "${branchRecord.name}" configuration.`
-        : `Created Nexus Branch "${branchRecord.name}" and switched active view.`,
-    );
+    try {
+      if (existingBranch) {
+        const { updatedRecordsCount } = await cascadeBranchAndCourtRename({
+          branchId: branchRecord.id,
+          updatedBranch: branchRecord,
+          oldBranchName: existingBranch.name,
+          newBranchName: branchRecord.name,
+          courtRenames,
+          removedCourtNames,
+          fallbackCourtName: normalizedCourts[0]?.name || "Court 1",
+        });
+        setBranchFilter(branchRecord.name);
+        setBranchModalOpen(false);
+        toast.success(
+          updatedRecordsCount > 0
+            ? `Updated Nexus Branch "${branchRecord.name}" and cascaded changes across ${updatedRecordsCount} linked record(s).`
+            : `Updated Nexus Branch "${branchRecord.name}" configuration.`,
+        );
+      } else {
+        await setEntity("branches", branchRecord);
+        setBranchFilter(branchRecord.name);
+        setBranchModalOpen(false);
+        toast.success(`Created Nexus Branch "${branchRecord.name}" and switched active view.`);
+      }
+    } catch {
+      /* Error toast handled by data-store */
+    }
   };
 
+  const handleSaveNexusBranch = handleSaveBranch;
+
   // =========================================================================
-  // MODULE 1 TRIGGER: COURT & FACILITY RESERVATIONS
+  // EXTERNAL QUICK-ACTION TRIGGERS FOR SUB-MODULES
   // =========================================================================
   const [courtNewBookingTrigger, setCourtNewBookingTrigger] = useState(0);
-
-  // =========================================================================
-  // MODULE 2 STATE: GYM & STRENGTH MODULE
-  // =========================================================================
   const [gymModalOpen, setGymModalOpen] = useState(false);
-  const [workoutModalMember, setWorkoutModalMember] = useState<GymMember | null>(null);
-  const [gymForm, setGymForm] = useState<{
-    memberType: GymMember["memberType"];
-    linkedPlayerId: string;
-    memberName: string;
-    phone: string;
-    branch: string;
-    packageType: GymMember["packageType"];
-    monthlyFee: string;
-    totalSessionsIncluded: string;
-    startDate: string;
-    expiryDate: string;
-    paymentMethod: "Cash" | "Card" | "Charge to Player Account";
-  }>({
-    memberType: "Academy Player",
-    linkedPlayerId: "",
-    memberName: "",
-    phone: "",
-    branch: defaultBranchName,
-    packageType: "Athlete Pro S&C",
-    monthlyFee: "65",
-    totalSessionsIncluded: "12",
-    startDate: todayISO(),
-    expiryDate: addDaysToIso(todayISO(), 30),
-    paymentMethod: "Cash",
-  });
-
-  const openEnrollGymModal = () => {
-    const targetBranch = branchFilter !== "All" ? branchFilter : defaultBranchName;
-    const bObj = branches.find((b) => b.name === targetBranch);
-    const defaultFee = String(bObj?.gymDefaultMonthlyFee ?? 65);
-    setGymForm((prev) => ({
-      ...prev,
-      branch: targetBranch,
-      monthlyFee: defaultFee,
-    }));
-    setGymModalOpen(true);
-  };
-
-  const [workoutForm, setWorkoutForm] = useState<{
-    date: string;
-    focusArea: GymWorkoutLog["focusArea"];
-    exercisesSummary: string;
-    setsRepsLoad: string;
-    rpe: string;
-    personalRecord: string;
-    coachName: string;
-    notes: string;
-  }>({
-    date: todayISO(),
-    focusArea: "Lower Body Power",
-    exercisesSummary: "Trap Bar Deadlift, Bulgarian Split Squat, Box Jumps",
-    setsRepsLoad: "4x5 @ 95kg · 3x8 @ 40kg · 4x6 Plyo",
-    rpe: "8",
-    personalRecord: "",
-    coachName: currentUser?.name || "S&C Coach",
-    notes: "",
-  });
-
-  const handleCreateGymMember = async () => {
-    if (!gymForm.memberName.trim()) {
-      toast.error("Please enter or select the member's name.");
-      return;
-    }
-    const fee = Math.max(0, Number(gymForm.monthlyFee) || 0);
-    const totalSess =
-      gymForm.packageType === "Monthly Unlimited"
-        ? 999
-        : gymForm.packageType === "Walk-In Day Pass"
-          ? 1
-          : Math.max(1, Number(gymForm.totalSessionsIncluded) || 10);
-
-    const isChargedToAccount = gymForm.paymentMethod === "Charge to Player Account";
-    const newMember: GymMember = {
-      id: uid("gym"),
-      memberName: gymForm.memberName.trim(),
-      memberType: gymForm.memberType,
-      linkedPlayerId: gymForm.linkedPlayerId || undefined,
-      phone: gymForm.phone.trim(),
-      branch: gymForm.branch,
-      packageName: gymForm.packageType,
-      packageType: gymForm.packageType,
-      monthlyFee: fee,
-      sessionsRemaining: totalSess,
-      totalSessionsIncluded: totalSess,
-      startDate: gymForm.startDate,
-      expiryDate: gymForm.expiryDate,
-      status: "Active",
-      balance: isChargedToAccount ? fee : 0,
-      totalCheckIns: 0,
-      checkInHistory: [],
-      workoutLogs: [],
-      createdAt: new Date().toISOString(),
-    };
-
-    await setEntity("gymMembers", newMember);
-
-    if (fee > 0) {
-      if (isChargedToAccount && gymForm.linkedPlayerId) {
-        const linkedPlayer = players.find((p) => p.id === gymForm.linkedPlayerId);
-        if (linkedPlayer) {
-          await patchEntity("players", linkedPlayer.id, {
-            balance: Math.round(((Number(linkedPlayer.balance) || 0) + fee) * 100) / 100,
-          });
-        }
-      } else {
-        const ledgerEntry: LedgerEntry = {
-          id: uid("led-gym"),
-          date: todayISO(),
-          account: "Gym & Strength Memberships (Vescio Nexus)",
-          category: "Gym & S&C",
-          entry: `Gym Membership · ${newMember.memberName} (${newMember.packageType})`,
-          description: `${newMember.memberType} · ${gymForm.paymentMethod}`,
-          type: "Revenue",
-          amount: fee,
-          status: "Collected",
-          branch: newMember.branch,
-          referenceId: newMember.id,
-        };
-        await setEntity("ledger", ledgerEntry);
-      }
-    }
-
-    toast.success(`Enrolled ${newMember.memberName} in ${newMember.packageType}!`);
-    setGymModalOpen(false);
-  };
-
-  const handleGymCheckIn = async (member: GymMember) => {
-    if (member.status !== "Active") {
-      toast.error(`${member.memberName}'s membership is ${member.status}. Please renew first.`);
-      return;
-    }
-    const now = new Date();
-    const today = todayISO();
-    const timeStr = now.toTimeString().slice(0, 5);
-    const isUnlimited =
-      member.packageType === "Monthly Unlimited" || (member.totalSessionsIncluded ?? 0) >= 999;
-    const nextRemaining = isUnlimited ? 999 : Math.max(0, (member.sessionsRemaining ?? 1) - 1);
-    const nextStatus: GymMember["status"] =
-      !isUnlimited && nextRemaining === 0 ? "Expired" : member.status;
-
-    const nextHistory = [
-      { id: uid("chk"), date: today, time: timeStr, note: "Gym Floor & S&C Check-In" },
-      ...(member.checkInHistory || []),
-    ];
-
-    await patchEntity("gymMembers", member.id, {
-      lastCheckInDate: today,
-      totalCheckIns: (member.totalCheckIns || 0) + 1,
-      sessionsRemaining: nextRemaining,
-      status: nextStatus,
-      checkInHistory: nextHistory,
-      updatedAt: now.toISOString(),
-    });
-
-    toast.success(
-      isUnlimited
-        ? `Checked in ${member.memberName} (Unlimited Access · #${(member.totalCheckIns || 0) + 1}).`
-        : `Checked in ${member.memberName} (${nextRemaining} S&C sessions remaining).`,
-    );
-  };
-
-  const handleAddWorkoutLog = async () => {
-    if (!workoutModalMember) return;
-    if (!workoutForm.exercisesSummary.trim()) {
-      toast.error("Please enter the exercises performed.");
-      return;
-    }
-    const newLog: GymWorkoutLog = {
-      id: uid("wlog"),
-      date: workoutForm.date || todayISO(),
-      focusArea: workoutForm.focusArea,
-      exercisesSummary: workoutForm.exercisesSummary.trim(),
-      setsRepsLoad: workoutForm.setsRepsLoad.trim(),
-      rpe: Math.min(10, Math.max(1, Number(workoutForm.rpe) || 7)),
-      personalRecord: workoutForm.personalRecord.trim() || undefined,
-      coachName: workoutForm.coachName.trim() || "S&C Coach",
-      notes: workoutForm.notes.trim() || undefined,
-    };
-
-    const updatedLogs = [newLog, ...(workoutModalMember.workoutLogs || [])];
-    await patchEntity("gymMembers", workoutModalMember.id, {
-      workoutLogs: updatedLogs,
-      updatedAt: new Date().toISOString(),
-    });
-    setWorkoutModalMember({
-      ...workoutModalMember,
-      workoutLogs: updatedLogs,
-    });
-    setWorkoutForm((prev) => ({
-      ...prev,
-      personalRecord: "",
-      notes: "",
-    }));
-    toast.success(`Logged S&C workout for ${workoutModalMember.memberName}!`);
-  };
-
-  // =========================================================================
-  // MODULE 3 STATE: PHYSIOTHERAPY & MEDICAL MODULE
-  // =========================================================================
   const [physioIntakeOpen, setPhysioIntakeOpen] = useState(false);
-  const [activePhysioRecord, setActivePhysioRecord] = useState<PhysioRecord | null>(null);
-  const [physioForm, setPhysioForm] = useState<{
-    patientType: PhysioRecord["patientType"];
-    linkedPlayerId: string;
-    patientName: string;
-    team: string;
-    phone: string;
-    branch: string;
-    medicalStatus: PlayerMedicalClearanceStatus;
-    injuryArea: PhysioRecord["injuryArea"];
-    diagnosis: string;
-    mechanism: string;
-    severity: PhysioRecord["severity"];
-    intakeDate: string;
-    estimatedReturnDate: string;
-    therapistName: string;
-    rtpStage: 1 | 2 | 3 | 4 | 5;
-    restrictions: string;
-  }>({
-    patientType: "Academy Player",
-    linkedPlayerId: "",
-    patientName: "",
-    team: "",
-    phone: "",
-    branch: defaultBranchName,
-    medicalStatus: "Limited",
-    injuryArea: "Ankle / Foot",
-    diagnosis: "",
-    mechanism: "Non-contact landing during practice",
-    severity: "Mild (Grade 1)",
-    intakeDate: todayISO(),
-    estimatedReturnDate: addDaysToIso(todayISO(), 14),
-    therapistName: currentUser?.name || "Dr. Rami Khoury (PT)",
-    rtpStage: 2,
-    restrictions: "No 5v5 contact scrimmages; cleared for shooting & controlled footwork.",
-  });
-
-  const openPhysioIntakeModal = () => {
-    const targetBranch = branchFilter !== "All" ? branchFilter : defaultBranchName;
-    const bObj = branches.find((b) => b.name === targetBranch);
-    setPhysioForm((prev) => ({
-      ...prev,
-      branch: targetBranch,
-      therapistName: bObj?.leadPhysiotherapist || prev.therapistName,
-    }));
-    setPhysioIntakeOpen(true);
-  };
-
-  const [treatmentForm, setTreatmentForm] = useState<{
-    date: string;
-    time: string;
-    therapistName: string;
-    modality: PhysioTreatmentSession["modality"];
-    soapNotes: string;
-    painScore: string;
-    fee: string;
-    paymentStatus: PhysioTreatmentSession["paymentStatus"];
-  }>({
-    date: todayISO(),
-    time: "16:30",
-    therapistName: currentUser?.name || "Dr. Rami Khoury (PT)",
-    modality: "Manual Therapy & Mobilization",
-    soapNotes: "",
-    painScore: "3",
-    fee: "45",
-    paymentStatus: "Academy Covered",
-  });
-
-  const syncPlayerMedicalStatusToAcademy = async (
-    playerId: string | undefined,
-    medicalStatus: PlayerMedicalClearanceStatus,
-    rtpStage: 1 | 2 | 3 | 4 | 5,
-    diagnosisNote?: string,
-  ) => {
-    if (!playerId) return;
-    const player = players.find((p) => p.id === playerId);
-    if (!player) return;
-    const statusLabel =
-      medicalStatus === "Fit"
-        ? "Fit (Cleared)"
-        : medicalStatus === "Limited"
-          ? "Limited / Modified Training"
-          : "Injured / Out";
-    const summaryNote = diagnosisNote
-      ? `[Physio ${todayISO()}] ${statusLabel} · RTP Stage ${rtpStage}/5: ${diagnosisNote}`
-      : player.medicalNotes;
-
-    await patchEntity("players", playerId, {
-      medicalStatus,
-      rtpStage,
-      ...(summaryNote ? { medicalNotes: summaryNote } : {}),
-    });
-  };
-
-  const handleCreatePhysioIntake = async () => {
-    if (!physioForm.patientName.trim() || !physioForm.diagnosis.trim()) {
-      toast.error("Please enter the patient name and clinical diagnosis.");
-      return;
-    }
-    const nowIso = new Date().toISOString();
-    const record: PhysioRecord = {
-      id: uid("physio"),
-      patientName: physioForm.patientName.trim(),
-      patientType: physioForm.patientType,
-      linkedPlayerId: physioForm.linkedPlayerId || undefined,
-      team: physioForm.team || undefined,
-      phone: physioForm.phone.trim() || undefined,
-      branch: physioForm.branch,
-      medicalStatus: physioForm.medicalStatus,
-      injuryArea: physioForm.injuryArea,
-      diagnosis: physioForm.diagnosis.trim(),
-      mechanism: physioForm.mechanism.trim() || undefined,
-      severity: physioForm.severity,
-      intakeDate: physioForm.intakeDate,
-      estimatedReturnDate: physioForm.estimatedReturnDate || undefined,
-      therapistName: physioForm.therapistName.trim() || "Physiotherapist",
-      rtpStage: physioForm.rtpStage,
-      restrictions: physioForm.restrictions.trim(),
-      treatmentSessions: [],
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    };
-
-    await setEntity("physioRecords", record);
-
-    if (record.linkedPlayerId) {
-      await syncPlayerMedicalStatusToAcademy(
-        record.linkedPlayerId,
-        record.medicalStatus,
-        record.rtpStage,
-        `${record.injuryArea} - ${record.diagnosis} (${record.restrictions})`,
-      );
-    }
-
-    toast.success(
-      `Created Physiotherapy Case for ${record.patientName} & synced Academy status (${record.medicalStatus}).`,
-    );
-    setPhysioIntakeOpen(false);
-  };
-
-  const handleUpdatePhysioRtpAndStatus = async (
-    record: PhysioRecord,
-    nextStatus: PlayerMedicalClearanceStatus,
-    nextStage: 1 | 2 | 3 | 4 | 5,
-  ) => {
-    const updated: PhysioRecord = {
-      ...record,
-      medicalStatus: nextStatus,
-      rtpStage: nextStage,
-      updatedAt: new Date().toISOString(),
-    };
-    await setEntity("physioRecords", updated);
-    if (activePhysioRecord?.id === record.id) {
-      setActivePhysioRecord(updated);
-    }
-    if (record.linkedPlayerId) {
-      await syncPlayerMedicalStatusToAcademy(
-        record.linkedPlayerId,
-        nextStatus,
-        nextStage,
-        `${record.injuryArea} - ${record.diagnosis} (${record.restrictions})`,
-      );
-    }
-    toast.success(
-      `Updated ${record.patientName}: Status "${nextStatus}" · RTP Stage ${nextStage}/5 (Synced with Academy Roster).`,
-    );
-  };
-
-  const handleAddTreatmentSession = async () => {
-    if (!activePhysioRecord) return;
-    if (!treatmentForm.soapNotes.trim()) {
-      toast.error("Please enter therapist SOAP / clinical notes for this session.");
-      return;
-    }
-    const fee = Math.max(0, Number(treatmentForm.fee) || 0);
-    const sessionItem: PhysioTreatmentSession = {
-      id: uid("pt-sess"),
-      date: treatmentForm.date || todayISO(),
-      time: treatmentForm.time || "16:30",
-      therapistName: treatmentForm.therapistName.trim() || activePhysioRecord.therapistName,
-      modality: treatmentForm.modality,
-      soapNotes: treatmentForm.soapNotes.trim(),
-      painScore: Math.min(10, Math.max(0, Number(treatmentForm.painScore) || 0)),
-      fee,
-      paymentStatus: treatmentForm.paymentStatus,
-      status: "Completed",
-    };
-
-    const nextSessions = [sessionItem, ...(activePhysioRecord.treatmentSessions || [])];
-    const updatedRecord: PhysioRecord = {
-      ...activePhysioRecord,
-      treatmentSessions: nextSessions,
-      updatedAt: new Date().toISOString(),
-    };
-    await setEntity("physioRecords", updatedRecord);
-    setActivePhysioRecord(updatedRecord);
-
-    if (fee > 0 && treatmentForm.paymentStatus === "Paid") {
-      const ledgerEntry: LedgerEntry = {
-        id: uid("led-physio"),
-        date: sessionItem.date,
-        account: "Physiotherapy & Medical Clinic (Vescio Nexus)",
-        category: "Physiotherapy",
-        entry: `Physio Session · ${activePhysioRecord.patientName} (${sessionItem.modality})`,
-        description: `Therapist: ${sessionItem.therapistName}`,
-        type: "Revenue",
-        amount: fee,
-        status: "Collected",
-        branch: activePhysioRecord.branch,
-        referenceId: sessionItem.id,
-      };
-      await setEntity("ledger", ledgerEntry);
-    } else if (
-      fee > 0 &&
-      treatmentForm.paymentStatus === "Charged to Account" &&
-      activePhysioRecord.linkedPlayerId
-    ) {
-      const targetPlayer = players.find((p) => p.id === activePhysioRecord.linkedPlayerId);
-      if (targetPlayer) {
-        await patchEntity("players", targetPlayer.id, {
-          balance: Math.round(((Number(targetPlayer.balance) || 0) + fee) * 100) / 100,
-        });
-      }
-    }
-
-    setTreatmentForm((prev) => ({ ...prev, soapNotes: "" }));
-    toast.success(`Recorded treatment session for ${activePhysioRecord.patientName}.`);
-  };
-
-  // =========================================================================
-  // MODULE 4 STATE: KIOSK POS (POINT OF SALE)
-  // =========================================================================
-  const [posCategory, setPosCategory] = useState<"All" | PosItemCategory>("All");
-  const [posSearch, setPosSearch] = useState("");
-  const [posCart, setPosCart] = useState<PosCartLineItem[]>([]);
-  const [posDiscount, setPosDiscount] = useState<string>("0");
-  const [posCustomerType, setPosCustomerType] = useState<PosTransaction["customerType"]>("Walk-In");
-  const [posLinkedPlayerId, setPosLinkedPlayerId] = useState<string>("");
-  const [posLinkedGymMemberId, setPosLinkedGymMemberId] = useState<string>("");
-  const [posWalkInName, setPosWalkInName] = useState<string>("Walk-In Customer");
-  const [posCatalogModalOpen, setPosCatalogModalOpen] = useState(false);
-  const [posReceiptModalTx, setPosReceiptModalTx] = useState<PosTransaction | null>(null);
-  const [newCatalogItem, setNewCatalogItem] = useState<{
-    name: string;
-    category: PosItemCategory;
-    price: string;
-    stock: string;
-    sku: string;
-    branch: string;
-  }>({
-    name: "",
-    category: "Hydration & Drinks",
-    price: "3.00",
-    stock: "50",
-    sku: "",
-    branch: "All",
-  });
-
-  // Merge POS Catalog with live Academy Merchandise Stock items (scoped by selected branch)
-  const unifiedPosCatalog = useMemo<PosCatalogItem[]>(() => {
-    const baseItems = posCatalog.filter((c) => {
-      if (c.active === false) return false;
-      if (
-        branchFilter !== "All" &&
-        c.branch &&
-        c.branch !== "All" &&
-        c.branch.toLowerCase() !== branchFilter.toLowerCase()
-      ) {
-        return false;
-      }
-      return true;
-    });
-    const linkedStockIds = new Set(baseItems.map((b) => b.linkedStockId).filter(Boolean));
-    const stockMapped: PosCatalogItem[] = stock
-      .filter((s) => {
-        if (linkedStockIds.has(s.id)) return false;
-        if (
-          branchFilter !== "All" &&
-          s.branch &&
-          s.branch !== "All" &&
-          s.branch.toLowerCase() !== branchFilter.toLowerCase()
-        ) {
-          return false;
-        }
-        return true;
-      })
-      .map((s) => ({
-        id: `stock-pos-${s.id}`,
-        name: `${s.item}${s.variant ? ` (${s.variant})` : ""}`,
-        category: "Uniforms & Merch" as const,
-        price: Number(s.sellingPrice ?? s.price) || 25,
-        stock: Number(s.stock) || 0,
-        sku: `STK-${s.id.slice(-4).toUpperCase()}`,
-        linkedStockId: s.id,
-        branch: s.branch,
-        active: true,
-      }));
-    return [...baseItems, ...stockMapped];
-  }, [posCatalog, stock, branchFilter]);
-
-  const filteredPosCatalog = useMemo(() => {
-    const q = posSearch.trim().toLowerCase();
-    return unifiedPosCatalog.filter((item) => {
-      if (posCategory !== "All" && item.category !== posCategory) return false;
-      if (
-        q &&
-        !item.name.toLowerCase().includes(q) &&
-        !(item.sku || "").toLowerCase().includes(q) &&
-        !item.category.toLowerCase().includes(q)
-      ) {
-        return false;
-      }
-      return true;
-    });
-  }, [unifiedPosCatalog, posCategory, posSearch]);
-
-  const posCartTotals = useMemo(() => {
-    const subtotal = posCart.reduce((sum, item) => sum + item.subtotal, 0);
-    const discount = Math.min(subtotal, Math.max(0, Number(posDiscount) || 0));
-    const total = Math.max(0, Math.round((subtotal - discount) * 100) / 100);
-    return {
-      subtotal: Math.round(subtotal * 100) / 100,
-      discount: Math.round(discount * 100) / 100,
-      total,
-    };
-  }, [posCart, posDiscount]);
-
-  const addToPosCart = (item: PosCatalogItem) => {
-    if (item.stock <= 0) {
-      toast.error(`${item.name} is out of stock.`);
-      return;
-    }
-    setPosCart((prev) => {
-      const existing = prev.find((line) => line.itemId === item.id);
-      if (existing) {
-        if (existing.quantity + 1 > item.stock) {
-          toast.error(`Only ${item.stock} unit(s) available for ${item.name}.`);
-          return prev;
-        }
-        return prev.map((line) =>
-          line.itemId === item.id
-            ? {
-                ...line,
-                quantity: line.quantity + 1,
-                subtotal: Math.round((line.quantity + 1) * line.unitPrice * 100) / 100,
-              }
-            : line,
-        );
-      }
-      return [
-        ...prev,
-        {
-          itemId: item.id,
-          name: item.name,
-          category: item.category,
-          quantity: 1,
-          unitPrice: item.price,
-          subtotal: item.price,
-          linkedStockId: item.linkedStockId,
-        },
-      ];
-    });
-  };
-
-  const updatePosCartQty = (itemId: string, delta: number) => {
-    setPosCart((prev) =>
-      prev
-        .map((line) => {
-          if (line.itemId !== itemId) return line;
-          const nextQty = line.quantity + delta;
-          if (nextQty <= 0) return null;
-          return {
-            ...line,
-            quantity: nextQty,
-            subtotal: Math.round(nextQty * line.unitPrice * 100) / 100,
-          };
-        })
-        .filter((x): x is PosCartLineItem => x !== null),
-    );
-  };
-
-  const handleCompletePosCheckout = async (paymentMethod: PosTransaction["paymentMethod"]) => {
-    if (posCart.length === 0) {
-      toast.error("Cart is empty. Tap items to add them to the order.");
-      return;
-    }
-
-    let resolvedCustomerName = posWalkInName.trim() || "Walk-In Customer";
-    const selectedPlayer =
-      posCustomerType === "Academy Player"
-        ? players.find((p) => p.id === posLinkedPlayerId)
-        : undefined;
-    const selectedGymMember =
-      posCustomerType === "Gym Member"
-        ? gymMembers.find((m) => m.id === posLinkedGymMemberId)
-        : undefined;
-
-    if (posCustomerType === "Academy Player") {
-      if (!selectedPlayer) {
-        toast.error("Please select the Academy Player for this order.");
-        return;
-      }
-      resolvedCustomerName = selectedPlayer.name;
-    } else if (posCustomerType === "Gym Member") {
-      if (!selectedGymMember) {
-        toast.error("Please select the Gym Member for this order.");
-        return;
-      }
-      resolvedCustomerName = selectedGymMember.memberName;
-    }
-
-    if (paymentMethod === "Charge to Account" && posCustomerType === "Walk-In") {
-      toast.error(
-        "To use 'Charge to Account', please select an Academy Player or Gym Member above.",
-      );
-      return;
-    }
-
-    const now = new Date();
-    const today = todayISO();
-    const timeStr = now.toTimeString().slice(0, 5);
-    const receiptNumber = `POS-${Date.now().toString().slice(-6)}`;
-    const activeBranch = branchFilter !== "All" ? branchFilter : defaultBranchName;
-
-    const tx: PosTransaction = {
-      id: uid("pos-tx"),
-      receiptNumber,
-      date: today,
-      time: timeStr,
-      branch: activeBranch,
-      cashierName: currentUser?.name || "POS Cashier",
-      customerType: posCustomerType,
-      customerName: resolvedCustomerName,
-      linkedPlayerId: selectedPlayer?.id,
-      linkedGymMemberId: selectedGymMember?.id,
-      items: posCart,
-      subtotal: posCartTotals.subtotal,
-      discount: posCartTotals.discount,
-      total: posCartTotals.total,
-      paymentMethod,
-      status: "Completed",
-      createdAt: now.toISOString(),
-    };
-
-    await setEntity("posTransactions", tx);
-
-    // Deduct stock from posCatalog and/or db.stock
-    for (const line of posCart) {
-      if (line.linkedStockId) {
-        const stk = stock.find((s) => s.id === line.linkedStockId);
-        if (stk) {
-          await patchEntity("stock", stk.id, {
-            stock: Math.max(0, (Number(stk.stock) || 0) - line.quantity),
-          });
-        }
-      } else {
-        const catItem = posCatalog.find((c) => c.id === line.itemId);
-        if (catItem && catItem.stock < 900) {
-          await setEntity("posCatalog", {
-            ...catItem,
-            stock: Math.max(0, (Number(catItem.stock) || 0) - line.quantity),
-          });
-        }
-      }
-    }
-
-    // Financial posting: Cash/Card -> Collected Revenue in Ledger; Charge to Account -> Player/Member balance + Pending Ledger
-    if (paymentMethod === "Charge to Account") {
-      if (selectedPlayer) {
-        await patchEntity("players", selectedPlayer.id, {
-          balance:
-            Math.round(((Number(selectedPlayer.balance) || 0) + posCartTotals.total) * 100) / 100,
-        });
-      } else if (selectedGymMember) {
-        await patchEntity("gymMembers", selectedGymMember.id, {
-          balance:
-            Math.round(((Number(selectedGymMember.balance) || 0) + posCartTotals.total) * 100) /
-            100,
-        });
-      }
-
-      const receivableEntry: LedgerEntry = {
-        id: uid("led-pos"),
-        date: today,
-        account: "Kiosk POS Sales (Vescio Nexus)",
-        category: "Kiosk POS",
-        entry: `POS Account Charge (${receiptNumber}) · ${resolvedCustomerName}`,
-        description: posCart.map((i) => `${i.quantity}x ${i.name}`).join(", "),
-        type: "Revenue",
-        amount: posCartTotals.total,
-        status: "Pending",
-        branch: activeBranch,
-        referenceId: tx.id,
-      };
-      await setEntity("ledger", receivableEntry);
-    } else {
-      const collectedEntry: LedgerEntry = {
-        id: uid("led-pos"),
-        date: today,
-        account: "Kiosk POS Sales (Vescio Nexus)",
-        category: "Kiosk POS",
-        entry: `POS Sale (${receiptNumber}) · ${paymentMethod} · ${resolvedCustomerName}`,
-        description: posCart.map((i) => `${i.quantity}x ${i.name}`).join(", "),
-        type: "Revenue",
-        amount: posCartTotals.total,
-        status: "Collected",
-        branch: activeBranch,
-        referenceId: tx.id,
-      };
-      await setEntity("ledger", collectedEntry);
-    }
-
-    setPosCart([]);
-    setPosDiscount("0");
-    setPosReceiptModalTx(tx);
-    toast.success(
-      paymentMethod === "Charge to Account"
-        ? `Charged ${money(tx.total)} to ${resolvedCustomerName}'s account (${receiptNumber}).`
-        : `POS Sale completed via ${paymentMethod}: ${money(tx.total)} (${receiptNumber}).`,
-    );
-  };
-
-  const handleAddPosCatalogItem = async () => {
-    if (!newCatalogItem.name.trim()) {
-      toast.error("Please enter the product name.");
-      return;
-    }
-    const item: PosCatalogItem = {
-      id: uid("pos-item"),
-      name: newCatalogItem.name.trim(),
-      category: newCatalogItem.category,
-      price: Math.max(0, Number(newCatalogItem.price) || 0),
-      stock: Math.max(0, Number(newCatalogItem.stock) || 0),
-      sku: newCatalogItem.sku.trim() || `POS-${Date.now().toString().slice(-4)}`,
-      branch: newCatalogItem.branch === "All" ? undefined : newCatalogItem.branch,
-      active: true,
-    };
-    // Ensure default catalog items are persisted in Firestore alongside the new item
-    if (!db.posCatalog || db.posCatalog.length === 0) {
-      for (const defItem of DEFAULT_POS_CATALOG) {
-        await setEntity("posCatalog", defItem);
-      }
-    }
-    await setEntity("posCatalog", item);
-    setNewCatalogItem({
-      name: "",
-      category: "Hydration & Drinks",
-      price: "3.00",
-      stock: "50",
-      sku: "",
-      branch: branchFilter !== "All" ? branchFilter : "All",
-    });
-    setPosCatalogModalOpen(false);
-    toast.success(`Added "${item.name}" to the Vescio Nexus Kiosk POS catalog.`);
-  };
-
-  // Daily Register Summary for POS
-  const posDailyRegister = useMemo(() => {
-    const today = todayISO();
-    const todayTxs = filteredPosTransactions.filter(
-      (t) => t.date === today && t.status === "Completed",
-    );
-    const cashTotal = todayTxs
-      .filter((t) => t.paymentMethod === "Cash")
-      .reduce((s, t) => s + t.total, 0);
-    const cardTotal = todayTxs
-      .filter((t) => t.paymentMethod === "Card")
-      .reduce((s, t) => s + t.total, 0);
-    const accountChargeTotal = todayTxs
-      .filter((t) => t.paymentMethod === "Charge to Account")
-      .reduce((s, t) => s + t.total, 0);
-    return {
-      count: todayTxs.length,
-      cashTotal: Math.round(cashTotal * 100) / 100,
-      cardTotal: Math.round(cardTotal * 100) / 100,
-      accountChargeTotal: Math.round(accountChargeTotal * 100) / 100,
-      grandTotal: Math.round((cashTotal + cardTotal + accountChargeTotal) * 100) / 100,
-    };
-  }, [filteredPosTransactions]);
+  const [opsFeedFilter, setOpsFeedFilter] = useState<
+    "all" | "courts" | "physio" | "gym" | "pos" | "offdays"
+  >("all");
 
   return (
     <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-ink-950 text-ink-100 flex flex-col">
@@ -1443,375 +1034,866 @@ function VescioNexusHub() {
       {/* MAIN VESCIO NEXUS CONTENT CONTAINER                                 */}
       {/* =================================================================== */}
       <main className="mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 py-6 lg:px-8 space-y-6">
-        {/* Top KPI Strip */}
-        <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Stat
-            label="Court Rentals Collected"
-            value={money(ecosystemKpis.courtRevenueCollected)}
-            sub={`${ecosystemKpis.activeReservationsCount} bookings · ${money(ecosystemKpis.courtPendingReceivables)} pending`}
-            accent
-          />
-          <Stat
-            label="Active Gym & S&C Athletes"
-            value={String(ecosystemKpis.activeGymCount)}
-            sub={`${ecosystemKpis.todayGymCheckIns} checked in today · ${money(ecosystemKpis.gymMonthlyRevenue)}/mo`}
-          />
-          <Stat
-            label="Physio & Medical Roster"
-            value={`${ecosystemKpis.activeRehabCases} Active Cases`}
-            sub={`${ecosystemKpis.injuredOrLimitedPlayers} Academy player(s) Limited/Out`}
-          />
-          <Stat
-            label="Kiosk POS Sales (Today)"
-            value={money(ecosystemKpis.todayPosSales)}
-            sub={`Cumulative POS Revenue: ${money(ecosystemKpis.totalPosSales)}`}
-            accent
-          />
+        {/* 1. LIVE CROSS-MODULE KPI STRIP (5 Executive Command Cards) */}
+        <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {/* KPI 1: Today's Total Vescio Nexus Revenue */}
+          <div className="flex min-w-0 flex-col justify-between rounded-xl border border-emerald-500/40 bg-gradient-to-br from-emerald-950/35 via-ink-900 to-ink-900 p-4 shadow-sm">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate font-mono text-[10px] font-bold uppercase tracking-wider text-emerald-300">
+                Today&apos;s Nexus Revenue
+              </span>
+              <Wallet className="h-4 w-4 shrink-0 text-emerald-400" />
+            </div>
+            <div className="mt-2 font-display text-2xl font-bold tracking-tight text-ink-100">
+              {money(ecosystemKpis.todayTotalNexusRevenue)}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-ink-800/80 pt-2 font-mono text-[10px] text-ink-300">
+              <span>Courts {money(ecosystemKpis.todayCourtRevenue)}</span>
+              <span>·</span>
+              <span>Gym {money(ecosystemKpis.todayGymRevenue)}</span>
+              <span>·</span>
+              <span>Physio {money(ecosystemKpis.todayPhysioRevenue)}</span>
+              <span>·</span>
+              <span>POS {money(ecosystemKpis.todayPosSales)}</span>
+            </div>
+          </div>
+
+          {/* KPI 2: Active Court Bookings Today & HCA/HCB/Full Utilization % */}
+          <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate font-mono text-[10px] font-bold uppercase tracking-wider text-court-300">
+                Courts Today · Utilization
+              </span>
+              <Calendar className="h-4 w-4 shrink-0 text-court-400" />
+            </div>
+            <div className="mt-2 flex items-baseline justify-between gap-2">
+              <span className="font-display text-2xl font-bold text-ink-100">
+                {ecosystemKpis.todayCourtBookingsCount} Bookings
+              </span>
+              <span className="rounded bg-court-500/20 px-1.5 py-0.5 font-mono text-xs font-bold text-court-300">
+                {ecosystemKpis.courtUtilizationPct}% Util.
+              </span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-1 border-t border-ink-800/80 pt-2 font-mono text-[10px] text-ink-400">
+              <span>
+                Full: <strong className="text-ink-200">{ecosystemKpis.todayFullCourtCount}</strong>{" "}
+                · HCA: <strong className="text-ink-200">{ecosystemKpis.todayHcaCount}</strong> ·
+                HCB: <strong className="text-ink-200">{ecosystemKpis.todayHcbCount}</strong>
+              </span>
+              <span>{ecosystemKpis.totalConfiguredCourts} court(s)</span>
+            </div>
+          </div>
+
+          {/* KPI 3: Gym Check-Ins Today & Active Memberships */}
+          <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate font-mono text-[10px] font-bold uppercase tracking-wider text-sky-300">
+                Gym Check-Ins &amp; Members
+              </span>
+              <Dumbbell className="h-4 w-4 shrink-0 text-sky-400" />
+            </div>
+            <div className="mt-2 flex items-baseline justify-between gap-2">
+              <span className="font-display text-2xl font-bold text-ink-100">
+                {ecosystemKpis.todayGymCheckIns} Check-Ins
+              </span>
+              <span className="rounded bg-sky-500/20 px-1.5 py-0.5 font-mono text-xs font-bold text-sky-300">
+                {ecosystemKpis.activeGymCount} Active
+              </span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-1 border-t border-ink-800/80 pt-2 font-mono text-[10px] text-ink-400">
+              <span>{money(ecosystemKpis.gymMonthlyRevenue)}/mo recurring</span>
+              <span>{ecosystemKpis.activeCoachPoolsCount} Coach pool(s)</span>
+            </div>
+          </div>
+
+          {/* KPI 4: Physiotherapy Appointments Today & Room Utilization */}
+          <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate font-mono text-[10px] font-bold uppercase tracking-wider text-rose-300">
+                Physio Today · Room Util.
+              </span>
+              <HeartPulse className="h-4 w-4 shrink-0 text-rose-400" />
+            </div>
+            <div className="mt-2 flex items-baseline justify-between gap-2">
+              <span className="font-display text-2xl font-bold text-ink-100">
+                {ecosystemKpis.todayPhysioApptsCount} Appts
+              </span>
+              <span className="rounded bg-rose-500/20 px-1.5 py-0.5 font-mono text-xs font-bold text-rose-300">
+                {ecosystemKpis.physioRoomUtilizationPct}% Rooms
+              </span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-1 border-t border-ink-800/80 pt-2 font-mono text-[10px] text-ink-400">
+              <span>{ecosystemKpis.activeRehabCases} active rehab cases</span>
+              <span>{ecosystemKpis.totalPhysioRooms} room(s)</span>
+            </div>
+          </div>
+
+          {/* KPI 5: Kiosk POS Sales Today & Low-Stock Inventory Alerts */}
+          <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate font-mono text-[10px] font-bold uppercase tracking-wider text-amber-300">
+                Kiosk POS &amp; Stock Alerts
+              </span>
+              <ShoppingCart className="h-4 w-4 shrink-0 text-amber-400" />
+            </div>
+            <div className="mt-2 flex items-baseline justify-between gap-2">
+              <span className="font-display text-2xl font-bold text-ink-100">
+                {money(ecosystemKpis.todayPosSales)}
+              </span>
+              <span
+                className={`rounded px-1.5 py-0.5 font-mono text-xs font-bold ${
+                  ecosystemKpis.lowStockAlertsCount > 0
+                    ? "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40"
+                    : "bg-emerald-500/15 text-emerald-300"
+                }`}
+              >
+                {ecosystemKpis.lowStockAlertsCount} Low Stock
+              </span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-1 border-t border-ink-800/80 pt-2 font-mono text-[10px] text-ink-400">
+              <span>{ecosystemKpis.todayPosTxCount} order(s) today</span>
+              <span>Total: {money(ecosystemKpis.totalPosSales)}</span>
+            </div>
+          </div>
         </div>
 
         {/* ================================================================= */}
-        {/* VIEW 0: VESCIO NEXUS LANDING PAGE                                 */}
+        {/* VIEW 0: VESCIO NEXUS EXECUTIVE COMMAND CENTER HUB                 */}
         {/* ================================================================= */}
         {activeModule === "hub" && (
           <div className="min-w-0 max-w-full space-y-6">
-            <div className="rounded-xl border border-emerald-500/30 bg-gradient-to-r from-ink-900 via-ink-900 to-emerald-950/40 p-6">
+            {/* Executive Command Banner + Active Branch Scope */}
+            <div className="rounded-xl border border-emerald-500/30 bg-gradient-to-r from-ink-900 via-ink-900 to-emerald-950/40 p-5">
               <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="min-w-0 max-w-2xl space-y-1.5">
-                  <div className="inline-flex items-center gap-2 rounded-full bg-emerald-500/15 px-3 py-1 font-mono text-[10px] font-semibold uppercase tracking-widest text-emerald-300 ring-1 ring-emerald-500/30">
-                    <Sparkles className="h-3 w-3" />
-                    <span>Unified Multi-Branch Sports Facility ERP</span>
+                <div className="min-w-0 max-w-3xl space-y-1.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-3 py-1 font-mono text-[10px] font-semibold uppercase tracking-widest text-emerald-300 ring-1 ring-emerald-500/30">
+                      <Sparkles className="h-3 w-3" />
+                      <span>Vescio Nexus · Live Executive Command Center</span>
+                    </span>
+                    <span className="rounded-md bg-purple-500/20 px-2.5 py-1 font-mono text-[10px] font-bold text-purple-200 ring-1 ring-purple-500/30">
+                      Scope:{" "}
+                      {branchFilter === "All" ? `All Branches (${branches.length})` : branchFilter}
+                    </span>
+                    <span className="font-mono text-[10px] text-ink-400">
+                      Date: {ecosystemKpis.today}
+                    </span>
                   </div>
-                  <h2 className="font-display text-2xl tracking-tight text-ink-100">
-                    Welcome to Vescio Nexus
+                  <h2 className="font-display text-xl sm:text-2xl tracking-tight text-ink-100">
+                    Unified Multi-Branch Facility Operations &amp; Live Telemetry
                   </h2>
                   <p className="text-xs text-ink-300 leading-relaxed">
-                    All 4 facility pillars share the exact same live Vescio Vector database and
-                    multi-branch foundation: court allocations (Full Court, HCA, HCB) prevent
-                    double-bookings with Academy practices, Physiotherapy medical statuses update
-                    Academy player rosters in real time, and Kiosk POS / Gym charges post directly
-                    to player accounts and the central accounting ledger.
+                    {activeBranchObj
+                      ? `${activeBranchObj.name} (${activeBranchObj.city || "Beirut"}) · ${ecosystemKpis.totalConfiguredCourts} Court(s) · Gym Cap: ${activeBranchObj.gymCapacity ?? 30} athletes · Physio Rooms: ${ecosystemKpis.totalPhysioRooms} · POS Terminal: ${activeBranchObj.posRegisterName || "Main Kiosk #1"}`
+                      : "All 4 facility pillars are synced in real time with Vescio Vector Roster, Courts, Merchandise Stock, and Financial Ledger."}
                   </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2.5">
-                  <Button variant="ghost" onClick={() => setActiveModule("branches")}>
-                    <Building2 className="mr-1.5 h-3.5 w-3.5 text-purple-400" />
-                    Manage Nexus Branches ({branches.length})
-                  </Button>
-                  <Link
-                    to="/"
-                    className="inline-flex items-center gap-2 rounded-lg bg-ink-850 px-4 py-2.5 font-mono text-xs font-semibold text-ink-100 ring-1 ring-ink-700 hover:bg-ink-800"
-                  >
-                    <ArrowLeft className="h-4 w-4 text-court-400" />
-                    <span>Return to Vescio Vector Academy</span>
-                  </Link>
-                </div>
-              </div>
-            </div>
-
-            {/* Active Branch Facility Snapshot Strip */}
-            <div className="rounded-xl border border-ink-800 bg-ink-900/70 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-3">
-                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-purple-500/15 text-purple-300 ring-1 ring-purple-500/30">
-                    <Building2 className="h-5 w-5" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-[10px] uppercase tracking-widest text-purple-300">
-                        Active Nexus Scope
-                      </span>
-                      <span className="rounded bg-purple-500/20 px-2 py-0.5 font-mono text-[10px] font-bold text-purple-200">
-                        {branchFilter === "All"
-                          ? `All Branches (${branches.length})`
-                          : branchFilter}
-                      </span>
-                    </div>
-                    <div className="mt-0.5 text-xs text-ink-300">
-                      {activeBranchObj
-                        ? `${activeBranchObj.name} · ${activeBranchObj.courts?.length || 1} Court(s) · Gym Capacity: ${activeBranchObj.gymCapacity ?? 30} athletes · Physio Rooms: ${activeBranchObj.physioRoomsCount ?? 2} · POS Register: ${activeBranchObj.posRegisterName || "Main Kiosk #1"}`
-                        : "Create or configure branches in Nexus Branches to customize courts, gym capacity, physio rooms, and POS registers."}
-                    </div>
-                  </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Button variant="ghost" onClick={openCreateBranchModal}>
                     + New Nexus Branch
                   </Button>
-                  <Button onClick={() => setActiveModule("branches")}>
-                    Configure Nexus Branches →
+                  <Button variant="ghost" onClick={() => setActiveModule("branches")}>
+                    <Building2 className="mr-1.5 h-3.5 w-3.5 text-purple-400" />
+                    Configure Branches ({branches.length})
                   </Button>
                 </div>
               </div>
             </div>
 
-            {/* 4 Module Cards */}
-            <div className="grid min-w-0 gap-5 md:grid-cols-2">
-              {/* 1. Court & Facility Reservation Module */}
-              <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-5 transition-all hover:border-court-500/50">
-                <div className="space-y-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-court-500/15 text-court-400 ring-1 ring-court-500/30">
+            {/* 2. MODULE LAUNCH CARDS (Clean, Non-Overflowing 4-Card Grid) */}
+            <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-4">
+              {/* Card 1: Court & Facility Reservations */}
+              <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-4 transition-all hover:border-court-500/50">
+                <div className="min-w-0 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-court-500/15 text-court-400 ring-1 ring-court-500/30">
                         <Calendar className="h-5 w-5" />
                       </div>
-                      <div>
-                        <span className="font-mono text-[10px] uppercase tracking-widest text-court-400">
-                          Vescio Nexus · Module 01
-                        </span>
-                        <h3 className="font-display text-lg text-ink-100">
-                          Court &amp; Facility Reservation Module
+                      <div className="min-w-0">
+                        <div className="font-mono text-[10px] uppercase tracking-wider text-court-400">
+                          Module 01
+                        </div>
+                        <h3 className="truncate font-display text-base font-semibold text-ink-100">
+                          Court &amp; Facility Reservations
                         </h3>
                       </div>
                     </div>
-                    <Chip tone="court">Full · HCA · HCB</Chip>
+                    <Chip tone="court">{ecosystemKpis.courtUtilizationPct}% Util</Chip>
                   </div>
 
-                  <p className="text-xs text-ink-300 leading-relaxed">
-                    Daily, Weekly, and Monthly 15-minute drag-to-book calendar (HCA, HCB, or Full
-                    Court), snapshot-protected branch Rates Setup, Walk-in &amp; Continuous
-                    recurring bookings, Off Days closures, and direct Financial Ledger Cash-In.
+                  <p className="text-xs text-ink-300 leading-relaxed line-clamp-2">
+                    15-min drag-to-book schedule (Full Court, HCA, HCB), snapshot-protected rates,
+                    recurring series, Off Days, and direct Cash-In.
                   </p>
 
-                  <div className="grid grid-cols-3 gap-2 rounded-lg border border-ink-800 bg-ink-950/70 p-3 font-mono text-xs">
-                    <div>
-                      <div className="text-[10px] text-ink-400">Active Bookings</div>
-                      <div className="mt-0.5 font-semibold text-ink-100">
-                        {ecosystemKpis.activeReservationsCount}
+                  <div className="grid grid-cols-2 gap-2 rounded-lg border border-ink-800 bg-ink-950/70 p-2.5 font-mono text-xs">
+                    <div className="min-w-0">
+                      <div className="truncate text-[10px] text-ink-400">Today Bookings</div>
+                      <div className="mt-0.5 truncate font-semibold text-ink-100">
+                        {ecosystemKpis.todayCourtBookingsCount} ({ecosystemKpis.todayFullCourtCount}
+                        F · {ecosystemKpis.todayHcaCount}A · {ecosystemKpis.todayHcbCount}B)
                       </div>
                     </div>
-                    <div>
-                      <div className="text-[10px] text-ink-400">Collected Fees</div>
-                      <div className="mt-0.5 font-semibold text-emerald-400">
+                    <div className="min-w-0">
+                      <div className="truncate text-[10px] text-ink-400">Today Cash-In</div>
+                      <div className="mt-0.5 truncate font-semibold text-emerald-400">
+                        {money(ecosystemKpis.todayCourtRevenue)}
+                      </div>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="truncate text-[10px] text-ink-400">Total Collected</div>
+                      <div className="mt-0.5 truncate font-semibold text-ink-200">
                         {money(ecosystemKpis.courtRevenueCollected)}
                       </div>
                     </div>
-                    <div>
-                      <div className="text-[10px] text-ink-400">Open Balance</div>
-                      <div className="mt-0.5 font-semibold text-amber-400">
+                    <div className="min-w-0">
+                      <div className="truncate text-[10px] text-ink-400">Open Receivables</div>
+                      <div className="mt-0.5 truncate font-semibold text-amber-400">
                         {money(ecosystemKpis.courtPendingReceivables)}
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-ink-800 pt-4">
-                  <span className="font-mono text-[11px] text-ink-400">
-                    Synced with {branches.reduce((acc, b) => acc + (b.courts?.length || 1), 0)}{" "}
-                    branch courts
-                  </span>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        setActiveModule("courts");
-                        setCourtNewBookingTrigger((n) => n + 1);
-                      }}
-                    >
-                      + New Booking
-                    </Button>
-                    <Button onClick={() => setActiveModule("courts")}>
-                      Open Court Reservations →
-                    </Button>
-                  </div>
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-ink-800 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveModule("courts");
+                      setCourtNewBookingTrigger((n) => n + 1);
+                    }}
+                    className="rounded-md bg-ink-850 px-2.5 py-1.5 font-mono text-[11px] font-semibold text-ink-200 ring-1 ring-ink-700 hover:bg-ink-800"
+                  >
+                    + New Booking
+                  </button>
+                  <Button onClick={() => setActiveModule("courts")}>Launch Courts →</Button>
                 </div>
               </div>
 
-              {/* 2. Gym & Strength Module */}
-              <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-5 transition-all hover:border-sky-500/50">
-                <div className="space-y-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-sky-500/15 text-sky-400 ring-1 ring-sky-500/30">
+              {/* Card 2: Gym & Strength */}
+              <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-4 transition-all hover:border-sky-500/50">
+                <div className="min-w-0 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-sky-500/15 text-sky-400 ring-1 ring-sky-500/30">
                         <Dumbbell className="h-5 w-5" />
                       </div>
-                      <div>
-                        <span className="font-mono text-[10px] uppercase tracking-widest text-sky-400">
-                          Vescio Nexus · Module 02
-                        </span>
-                        <h3 className="font-display text-lg text-ink-100">
-                          Gym &amp; Strength Module
+                      <div className="min-w-0">
+                        <div className="font-mono text-[10px] uppercase tracking-wider text-sky-400">
+                          Module 02
+                        </div>
+                        <h3 className="truncate font-display text-base font-semibold text-ink-100">
+                          Gym &amp; Strength
                         </h3>
                       </div>
                     </div>
-                    <Chip tone="info">S&amp;C + Memberships</Chip>
+                    <Chip tone="info">{ecosystemKpis.activeGymCount} Active</Chip>
                   </div>
 
-                  <p className="text-xs text-ink-300 leading-relaxed">
-                    Manage gym memberships, Strength &amp; Conditioning session packs, daily athlete
-                    check-ins, and structured workout logs (sets, reps, load kg, RPE &amp; PRs) for
-                    both Academy players and external gym members.
+                  <p className="text-xs text-ink-300 leading-relaxed line-clamp-2">
+                    Memberships &amp; PT session packs, Coach-as-Client session pools, front-desk
+                    check-ins, workout logs, and renewal alerts.
                   </p>
 
-                  <div className="grid grid-cols-3 gap-2 rounded-lg border border-ink-800 bg-ink-950/70 p-3 font-mono text-xs">
-                    <div>
-                      <div className="text-[10px] text-ink-400">Active Members</div>
-                      <div className="mt-0.5 font-semibold text-ink-100">
-                        {ecosystemKpis.activeGymCount}
+                  <div className="grid grid-cols-2 gap-2 rounded-lg border border-ink-800 bg-ink-950/70 p-2.5 font-mono text-xs">
+                    <div className="min-w-0">
+                      <div className="truncate text-[10px] text-ink-400">Today Check-Ins</div>
+                      <div className="mt-0.5 truncate font-semibold text-sky-400">
+                        {ecosystemKpis.todayGymCheckIns} athletes
                       </div>
                     </div>
-                    <div>
-                      <div className="text-[10px] text-ink-400">Today Check-Ins</div>
-                      <div className="mt-0.5 font-semibold text-sky-400">
-                        {ecosystemKpis.todayGymCheckIns}
+                    <div className="min-w-0">
+                      <div className="truncate text-[10px] text-ink-400">Today Package Sales</div>
+                      <div className="mt-0.5 truncate font-semibold text-emerald-400">
+                        {money(ecosystemKpis.todayGymRevenue)}
                       </div>
                     </div>
-                    <div>
-                      <div className="text-[10px] text-ink-400">Monthly Recurring</div>
-                      <div className="mt-0.5 font-semibold text-emerald-400">
-                        {money(ecosystemKpis.gymMonthlyRevenue)}
+                    <div className="min-w-0">
+                      <div className="truncate text-[10px] text-ink-400">Coach PT Pools</div>
+                      <div className="mt-0.5 truncate font-semibold text-ink-200">
+                        {ecosystemKpis.activeCoachPoolsCount} active
+                      </div>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="truncate text-[10px] text-ink-400">Expiring / Low</div>
+                      <div
+                        className={`mt-0.5 truncate font-semibold ${
+                          ecosystemKpis.expiringGymPackages.length > 0
+                            ? "text-amber-400"
+                            : "text-emerald-400"
+                        }`}
+                      >
+                        {ecosystemKpis.expiringGymPackages.length} alert(s)
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-ink-800 pt-4">
-                  <span className="font-mono text-[11px] text-ink-400">
-                    Branch Gym Cap: {activeBranchObj?.gymCapacity ?? 30} athletes
-                  </span>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        setActiveModule("gym");
-                        openEnrollGymModal();
-                      }}
-                    >
-                      + Enroll Member
-                    </Button>
-                    <Button onClick={() => setActiveModule("gym")}>
-                      Open Gym &amp; Strength →
-                    </Button>
-                  </div>
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-ink-800 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveModule("gym");
+                      setGymModalOpen(true);
+                    }}
+                    className="rounded-md bg-ink-850 px-2.5 py-1.5 font-mono text-[11px] font-semibold text-ink-200 ring-1 ring-ink-700 hover:bg-ink-800"
+                  >
+                    + Enroll Client
+                  </button>
+                  <Button onClick={() => setActiveModule("gym")}>Launch Gym →</Button>
                 </div>
               </div>
 
-              {/* 3. Physiotherapy & Medical Module */}
-              <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-5 transition-all hover:border-rose-500/50">
-                <div className="space-y-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-rose-500/15 text-rose-400 ring-1 ring-rose-500/30">
+              {/* Card 3: Physiotherapy & Medical */}
+              <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-4 transition-all hover:border-rose-500/50">
+                <div className="min-w-0 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-rose-500/15 text-rose-400 ring-1 ring-rose-500/30">
                         <HeartPulse className="h-5 w-5" />
                       </div>
-                      <div>
-                        <span className="font-mono text-[10px] uppercase tracking-widest text-rose-400">
-                          Vescio Nexus · Module 03
-                        </span>
-                        <h3 className="font-display text-lg text-ink-100">
-                          Physiotherapy &amp; Medical Module
+                      <div className="min-w-0">
+                        <div className="font-mono text-[10px] uppercase tracking-wider text-rose-400">
+                          Module 03
+                        </div>
+                        <h3 className="truncate font-display text-base font-semibold text-ink-100">
+                          Physiotherapy &amp; Medical
                         </h3>
                       </div>
                     </div>
-                    <Chip tone="warn">Live Roster Sync</Chip>
+                    <Chip tone="warn">{ecosystemKpis.physioRoomUtilizationPct}% Rooms</Chip>
                   </div>
 
-                  <p className="text-xs text-ink-300 leading-relaxed">
-                    Injury assessment intake, player medical status synced directly with the Academy
-                    (Fit, Limited/Modified Training, Injured/Out), treatment session scheduling,
-                    therapist SOAP notes, and 5-stage Return-to-Play (RTP) progression tracking.
+                  <p className="text-xs text-ink-300 leading-relaxed line-clamp-2">
+                    Clinical intake, practitioner &amp; room scheduling, SOAP notes, 5-stage Return
+                    to Play synced with Academy roster, and billing.
                   </p>
 
-                  <div className="grid grid-cols-3 gap-2 rounded-lg border border-ink-800 bg-ink-950/70 p-3 font-mono text-xs">
-                    <div>
-                      <div className="text-[10px] text-ink-400">Active Rehab Cases</div>
-                      <div className="mt-0.5 font-semibold text-ink-100">
-                        {ecosystemKpis.activeRehabCases}
+                  <div className="grid grid-cols-2 gap-2 rounded-lg border border-ink-800 bg-ink-950/70 p-2.5 font-mono text-xs">
+                    <div className="min-w-0">
+                      <div className="truncate text-[10px] text-ink-400">Appointments Today</div>
+                      <div className="mt-0.5 truncate font-semibold text-ink-100">
+                        {ecosystemKpis.todayPhysioApptsCount} session(s)
                       </div>
                     </div>
-                    <div>
-                      <div className="text-[10px] text-ink-400">Players Limited/Out</div>
-                      <div className="mt-0.5 font-semibold text-rose-400">
-                        {ecosystemKpis.injuredOrLimitedPlayers}
+                    <div className="min-w-0">
+                      <div className="truncate text-[10px] text-ink-400">Today Billing</div>
+                      <div className="mt-0.5 truncate font-semibold text-emerald-400">
+                        {money(ecosystemKpis.todayPhysioRevenue)}
                       </div>
                     </div>
-                    <div>
-                      <div className="text-[10px] text-ink-400">Cleared / Fit</div>
-                      <div className="mt-0.5 font-semibold text-emerald-400">
-                        {Math.max(0, players.length - ecosystemKpis.injuredOrLimitedPlayers)}
+                    <div className="min-w-0">
+                      <div className="truncate text-[10px] text-ink-400">Active Rehab Cases</div>
+                      <div className="mt-0.5 truncate font-semibold text-rose-400">
+                        {ecosystemKpis.activeRehabCases} case(s)
+                      </div>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="truncate text-[10px] text-ink-400">Roster Limited/Out</div>
+                      <div className="mt-0.5 truncate font-semibold text-amber-400">
+                        {ecosystemKpis.injuredOrLimitedPlayers} player(s)
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-ink-800 pt-4">
-                  <span className="font-mono text-[11px] text-ink-400">
-                    Clinic Rooms: {activeBranchObj?.physioRoomsCount ?? 2} ·{" "}
-                    {activeBranchObj?.leadPhysiotherapist || "Dr. Rami Khoury (PT)"}
-                  </span>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        setActiveModule("physio");
-                        openPhysioIntakeModal();
-                      }}
-                    >
-                      + Injury Intake
-                    </Button>
-                    <Button onClick={() => setActiveModule("physio")}>Open Physiotherapy →</Button>
-                  </div>
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-ink-800 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveModule("physio");
+                      setPhysioIntakeOpen(true);
+                    }}
+                    className="rounded-md bg-ink-850 px-2.5 py-1.5 font-mono text-[11px] font-semibold text-ink-200 ring-1 ring-ink-700 hover:bg-ink-800"
+                  >
+                    + Patient Intake
+                  </button>
+                  <Button onClick={() => setActiveModule("physio")}>Launch Physio →</Button>
                 </div>
               </div>
 
-              {/* 4. Kiosk POS (Point of Sale) */}
-              <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-5 transition-all hover:border-amber-500/50">
-                <div className="space-y-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/30">
+              {/* Card 4: Kiosk POS */}
+              <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-4 transition-all hover:border-amber-500/50">
+                <div className="min-w-0 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/30">
                         <ShoppingCart className="h-5 w-5" />
                       </div>
-                      <div>
-                        <span className="font-mono text-[10px] uppercase tracking-widest text-amber-400">
-                          Vescio Nexus · Module 04
-                        </span>
-                        <h3 className="font-display text-lg text-ink-100">
-                          Kiosk POS (Point of Sale)
+                      <div className="min-w-0">
+                        <div className="font-mono text-[10px] uppercase tracking-wider text-amber-400">
+                          Module 04
+                        </div>
+                        <h3 className="truncate font-display text-base font-semibold text-ink-100">
+                          Kiosk POS
                         </h3>
                       </div>
                     </div>
-                    <Chip tone="ok">Touch-Ready POS</Chip>
+                    <Chip tone="ok">EN / AR · Barcode</Chip>
                   </div>
 
-                  <p className="text-xs text-ink-300 leading-relaxed">
-                    Fast touch-friendly POS interface for on-site sales (water, sports drinks,
-                    academy uniforms synced with inventory, court walk-in fees, snacks &amp; tape).
-                    Supports Cash, Card, or Charge to Player/Member Account with daily sales
-                    summary.
+                  <p className="text-xs text-ink-300 leading-relaxed line-clamp-2">
+                    Bilingual EN/AR touch terminal, barcode scanner listener, split payments, real
+                    time stock deduction, and Z-Report shift reconciliation.
                   </p>
 
-                  <div className="grid grid-cols-3 gap-2 rounded-lg border border-ink-800 bg-ink-950/70 p-3 font-mono text-xs">
-                    <div>
-                      <div className="text-[10px] text-ink-400">Today Register</div>
-                      <div className="mt-0.5 font-semibold text-emerald-400">
-                        {money(posDailyRegister.grandTotal)}
+                  <div className="grid grid-cols-2 gap-2 rounded-lg border border-ink-800 bg-ink-950/70 p-2.5 font-mono text-xs">
+                    <div className="min-w-0">
+                      <div className="truncate text-[10px] text-ink-400">Sales Today</div>
+                      <div className="mt-0.5 truncate font-semibold text-emerald-400">
+                        {money(posDailyRegister.grandTotal)} ({posDailyRegister.count})
                       </div>
                     </div>
-                    <div>
-                      <div className="text-[10px] text-ink-400">Cash / Card</div>
-                      <div className="mt-0.5 font-semibold text-ink-100">
+                    <div className="min-w-0">
+                      <div className="truncate text-[10px] text-ink-400">Cash / Card</div>
+                      <div className="mt-0.5 truncate font-semibold text-ink-100">
                         {money(posDailyRegister.cashTotal + posDailyRegister.cardTotal)}
                       </div>
                     </div>
-                    <div>
-                      <div className="text-[10px] text-ink-400">Account Charges</div>
-                      <div className="mt-0.5 font-semibold text-amber-400">
+                    <div className="min-w-0">
+                      <div className="truncate text-[10px] text-ink-400">Account Charges</div>
+                      <div className="mt-0.5 truncate font-semibold text-amber-400">
                         {money(posDailyRegister.accountChargeTotal)}
+                      </div>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="truncate text-[10px] text-ink-400">Low-Stock Alerts</div>
+                      <div
+                        className={`mt-0.5 truncate font-semibold ${
+                          ecosystemKpis.lowStockAlertsCount > 0
+                            ? "text-rose-400"
+                            : "text-emerald-400"
+                        }`}
+                      >
+                        {ecosystemKpis.lowStockAlertsCount} item(s)
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-ink-800 pt-4">
-                  <span className="font-mono text-[11px] text-ink-400">
-                    {unifiedPosCatalog.length} products &amp; merch items ready
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-ink-800 pt-3">
+                  <span className="truncate font-mono text-[10px] text-ink-400">
+                    {unifiedPosCatalog.length} active SKUs
                   </span>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button onClick={() => setActiveModule("pos")}>
-                      Launch Kiosk POS Terminal →
-                    </Button>
-                  </div>
+                  <Button onClick={() => setActiveModule("pos")}>Launch Kiosk POS →</Button>
                 </div>
+              </div>
+            </div>
+
+            {/* 3. UNIFIED OPERATIONS FEED: "Today's Schedule & Alerts" */}
+            <div className="rounded-xl border border-ink-800 bg-ink-900/90 p-5 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-800 pb-3.5">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-emerald-300">
+                      Unified Operations Feed
+                    </span>
+                  </div>
+                  <h3 className="mt-0.5 font-display text-lg font-semibold text-ink-100">
+                    Today&apos;s Schedule &amp; Alerts ({ecosystemKpis.today})
+                  </h3>
+                </div>
+
+                {/* Filter Pills for the Unified Feed */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setOpsFeedFilter("all")}
+                    className={`rounded-md px-2.5 py-1 font-mono text-xs font-semibold transition-all ${
+                      opsFeedFilter === "all"
+                        ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40"
+                        : "bg-ink-950 text-ink-300 hover:bg-ink-850"
+                    }`}
+                  >
+                    All Streams
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOpsFeedFilter("courts")}
+                    className={`rounded-md px-2.5 py-1 font-mono text-xs font-semibold transition-all ${
+                      opsFeedFilter === "courts"
+                        ? "bg-court-500/20 text-court-300 ring-1 ring-court-500/40"
+                        : "bg-ink-950 text-ink-300 hover:bg-ink-850"
+                    }`}
+                  >
+                    Court Bookings ({ecosystemKpis.upcomingCourtBookings.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOpsFeedFilter("physio")}
+                    className={`rounded-md px-2.5 py-1 font-mono text-xs font-semibold transition-all ${
+                      opsFeedFilter === "physio"
+                        ? "bg-rose-500/20 text-rose-300 ring-1 ring-rose-500/40"
+                        : "bg-ink-950 text-ink-300 hover:bg-ink-850"
+                    }`}
+                  >
+                    Physio Sessions ({ecosystemKpis.todayPhysioApptsCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOpsFeedFilter("gym")}
+                    className={`rounded-md px-2.5 py-1 font-mono text-xs font-semibold transition-all ${
+                      opsFeedFilter === "gym"
+                        ? "bg-sky-500/20 text-sky-300 ring-1 ring-sky-500/40"
+                        : "bg-ink-950 text-ink-300 hover:bg-ink-850"
+                    }`}
+                  >
+                    Gym Expiring ({ecosystemKpis.expiringGymPackages.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOpsFeedFilter("pos")}
+                    className={`rounded-md px-2.5 py-1 font-mono text-xs font-semibold transition-all ${
+                      opsFeedFilter === "pos"
+                        ? "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40"
+                        : "bg-ink-950 text-ink-300 hover:bg-ink-850"
+                    }`}
+                  >
+                    POS Low Stock ({ecosystemKpis.lowStockAlertsCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOpsFeedFilter("offdays")}
+                    className={`rounded-md px-2.5 py-1 font-mono text-xs font-semibold transition-all ${
+                      opsFeedFilter === "offdays"
+                        ? "bg-purple-500/20 text-purple-300 ring-1 ring-purple-500/40"
+                        : "bg-ink-950 text-ink-300 hover:bg-ink-850"
+                    }`}
+                  >
+                    Off Days ({ecosystemKpis.activeOffDays.length})
+                  </button>
+                </div>
+              </div>
+
+              {/* Active Off Days Banner (Always highlighted when present and filter is all or offdays) */}
+              {(opsFeedFilter === "all" || opsFeedFilter === "offdays") &&
+                ecosystemKpis.activeOffDays.length > 0 && (
+                  <div className="rounded-lg border border-purple-500/40 bg-purple-950/20 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 font-mono text-xs font-bold text-purple-300">
+                        <Calendar className="h-4 w-4 text-purple-400" />
+                        <span>
+                          Active &amp; Upcoming Facility Off Days (
+                          {ecosystemKpis.activeOffDays.length})
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setActiveModule("courts")}
+                        className="font-mono text-[11px] font-semibold text-purple-300 hover:underline"
+                      >
+                        Manage Off Days →
+                      </button>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {ecosystemKpis.activeOffDays.slice(0, 6).map((od) => (
+                        <div
+                          key={od.id}
+                          className="inline-flex items-center gap-2 rounded-md border border-purple-500/30 bg-ink-950/90 px-2.5 py-1 font-mono text-xs"
+                        >
+                          <span className="font-bold text-purple-300">{od.date}</span>
+                          <span className="text-ink-300">{od.branchName}</span>
+                          <span className="text-ink-400">· {od.reason || "Facility Closed"}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+              {/* 4-Column Live Operational Feed Grid */}
+              <div className="grid min-w-0 gap-4 lg:grid-cols-2 xl:grid-cols-4">
+                {/* Stream 1: Upcoming & Today's Court Bookings */}
+                {(opsFeedFilter === "all" || opsFeedFilter === "courts") && (
+                  <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-950/70 p-3.5 space-y-3">
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between border-b border-ink-800 pb-2">
+                        <span className="font-mono text-xs font-bold text-court-300">
+                          Upcoming Court Bookings
+                        </span>
+                        <span className="rounded bg-court-500/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-court-300">
+                          {ecosystemKpis.upcomingCourtBookings.length}
+                        </span>
+                      </div>
+
+                      {ecosystemKpis.upcomingCourtBookings.length === 0 ? (
+                        <div className="py-6 text-center font-mono text-xs text-ink-400">
+                          No upcoming court bookings for this branch scope.
+                        </div>
+                      ) : (
+                        <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                          {ecosystemKpis.upcomingCourtBookings.slice(0, 6).map((r) => (
+                            <div
+                              key={r.id}
+                              className="rounded-lg border border-ink-800 bg-ink-900/90 p-2.5 space-y-1"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="truncate font-mono text-xs font-semibold text-ink-100">
+                                  {r.clientName}
+                                </span>
+                                <span className="shrink-0 rounded bg-court-500/20 px-1.5 py-0.5 font-mono text-[10px] font-bold text-court-300">
+                                  {r.courtAllocation === "Full Court"
+                                    ? "FULL"
+                                    : r.courtAllocation === "Half Court - HCA"
+                                      ? "HCA"
+                                      : "HCB"}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap items-center justify-between gap-1 font-mono text-[11px] text-ink-300">
+                                <span>
+                                  {r.date === ecosystemKpis.today ? "Today" : r.date} ·{" "}
+                                  {r.startTime}–{r.endTime}
+                                </span>
+                                <span className="text-ink-400">{r.court}</span>
+                              </div>
+                              <div className="flex items-center justify-between font-mono text-[10px]">
+                                <span className="text-ink-400">{r.branch}</span>
+                                <span
+                                  className={
+                                    r.paymentStatus === "Paid"
+                                      ? "text-emerald-400 font-semibold"
+                                      : "text-amber-400 font-semibold"
+                                  }
+                                >
+                                  {r.paymentStatus} · {money(r.totalAmount)}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setActiveModule("courts")}
+                      className="w-full rounded-md bg-ink-900 py-1.5 text-center font-mono text-[11px] font-semibold text-court-300 ring-1 ring-ink-800 hover:bg-court-500/15"
+                    >
+                      Open Court Schedule →
+                    </button>
+                  </div>
+                )}
+
+                {/* Stream 2: Active & Today's Physio Sessions */}
+                {(opsFeedFilter === "all" || opsFeedFilter === "physio") && (
+                  <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-950/70 p-3.5 space-y-3">
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between border-b border-ink-800 pb-2">
+                        <span className="font-mono text-xs font-bold text-rose-300">
+                          Active Physio Sessions
+                        </span>
+                        <span className="rounded bg-rose-500/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-rose-300">
+                          {ecosystemKpis.unifiedTodayPhysioSessions.length} Today
+                        </span>
+                      </div>
+
+                      {ecosystemKpis.unifiedTodayPhysioSessions.length === 0 &&
+                      ecosystemKpis.activeRehabCases === 0 ? (
+                        <div className="py-6 text-center font-mono text-xs text-ink-400">
+                          No active physio appointments or rehab cases today.
+                        </div>
+                      ) : (
+                        <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                          {ecosystemKpis.unifiedTodayPhysioSessions.slice(0, 5).map((s) => (
+                            <div
+                              key={s.id}
+                              className="rounded-lg border border-ink-800 bg-ink-900/90 p-2.5 space-y-1"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="truncate font-mono text-xs font-semibold text-ink-100">
+                                  {s.patientName}
+                                </span>
+                                <span className="shrink-0 rounded bg-rose-500/20 px-1.5 py-0.5 font-mono text-[10px] font-bold text-rose-300">
+                                  {s.status}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap items-center justify-between gap-1 font-mono text-[11px] text-ink-300">
+                                <span>
+                                  {s.startTime}–{s.endTime} · {s.roomName}
+                                </span>
+                                <span className="truncate text-ink-400">{s.practitionerName}</span>
+                              </div>
+                              <div className="truncate font-mono text-[10px] text-ink-400">
+                                {s.modality} · {money(s.fee)} ({s.paymentStatus})
+                              </div>
+                            </div>
+                          ))}
+
+                          {ecosystemKpis.unifiedTodayPhysioSessions.length === 0 &&
+                            filteredPhysioRecords
+                              .filter(
+                                (r) =>
+                                  r.caseStatus !== "Discharged" &&
+                                  (r.medicalStatus !== "Fit" || r.rtpStage < 5),
+                              )
+                              .slice(0, 4)
+                              .map((rec) => (
+                                <div
+                                  key={rec.id}
+                                  className="rounded-lg border border-ink-800 bg-ink-900/90 p-2.5 space-y-1"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="truncate font-mono text-xs font-semibold text-ink-100">
+                                      {rec.patientName}
+                                    </span>
+                                    <span className="shrink-0 rounded bg-rose-500/20 px-1.5 py-0.5 font-mono text-[10px] font-bold text-rose-300">
+                                      RTP {rec.rtpStage}/5 · {rec.medicalStatus}
+                                    </span>
+                                  </div>
+                                  <div className="truncate font-mono text-[11px] text-ink-300">
+                                    {rec.injuryArea} · {rec.diagnosis}
+                                  </div>
+                                  <div className="font-mono text-[10px] text-ink-400">
+                                    PT: {rec.therapistName} · {rec.branch}
+                                  </div>
+                                </div>
+                              ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setActiveModule("physio")}
+                      className="w-full rounded-md bg-ink-900 py-1.5 text-center font-mono text-[11px] font-semibold text-rose-300 ring-1 ring-ink-800 hover:bg-rose-500/15"
+                    >
+                      Open Physiotherapy Clinic →
+                    </button>
+                  </div>
+                )}
+
+                {/* Stream 3: Gym Expiring Packages & Low-Session Alerts */}
+                {(opsFeedFilter === "all" || opsFeedFilter === "gym") && (
+                  <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-950/70 p-3.5 space-y-3">
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between border-b border-ink-800 pb-2">
+                        <span className="font-mono text-xs font-bold text-sky-300">
+                          Gym Expiring Packages
+                        </span>
+                        <span className="rounded bg-sky-500/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-sky-300">
+                          {ecosystemKpis.expiringGymPackages.length} Alert(s)
+                        </span>
+                      </div>
+
+                      {ecosystemKpis.expiringGymPackages.length === 0 ? (
+                        <div className="py-6 text-center font-mono text-xs text-ink-400">
+                          All active gym memberships &amp; session packs are in good standing.
+                        </div>
+                      ) : (
+                        <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                          {ecosystemKpis.expiringGymPackages.slice(0, 6).map((m) => {
+                            const isLowSess =
+                              typeof m.sessionsRemaining === "number" &&
+                              (m.totalSessionsIncluded ?? 0) < 900 &&
+                              m.sessionsRemaining <= 2;
+                            return (
+                              <div
+                                key={m.id}
+                                className="rounded-lg border border-ink-800 bg-ink-900/90 p-2.5 space-y-1"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="truncate font-mono text-xs font-semibold text-ink-100">
+                                    {m.memberName}
+                                  </span>
+                                  <span className="shrink-0 rounded bg-amber-500/20 px-1.5 py-0.5 font-mono text-[10px] font-bold text-amber-300">
+                                    {m.status === "Expired"
+                                      ? "EXPIRED"
+                                      : isLowSess
+                                        ? `${m.sessionsRemaining} SESS LEFT`
+                                        : "EXPIRING SOON"}
+                                  </span>
+                                </div>
+                                <div className="truncate font-mono text-[11px] text-ink-300">
+                                  {m.packageName || m.packageType}
+                                </div>
+                                <div className="flex items-center justify-between font-mono text-[10px] text-ink-400">
+                                  <span>Exp: {m.expiryDate || "—"}</span>
+                                  <span>{m.branch}</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setActiveModule("gym")}
+                      className="w-full rounded-md bg-ink-900 py-1.5 text-center font-mono text-[11px] font-semibold text-sky-300 ring-1 ring-ink-800 hover:bg-sky-500/15"
+                    >
+                      Open Gym Renewals &amp; Roster →
+                    </button>
+                  </div>
+                )}
+
+                {/* Stream 4: POS Low-Stock Inventory Warnings */}
+                {(opsFeedFilter === "all" || opsFeedFilter === "pos") && (
+                  <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-950/70 p-3.5 space-y-3">
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between border-b border-ink-800 pb-2">
+                        <span className="font-mono text-xs font-bold text-amber-300">
+                          POS Low-Stock Warnings
+                        </span>
+                        <span
+                          className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${
+                            ecosystemKpis.lowStockAlertsCount > 0
+                              ? "bg-amber-500/20 text-amber-300"
+                              : "bg-emerald-500/15 text-emerald-300"
+                          }`}
+                        >
+                          {ecosystemKpis.lowStockAlertsCount} SKU(s)
+                        </span>
+                      </div>
+
+                      {ecosystemKpis.lowStockPosItems.length === 0 ? (
+                        <div className="py-6 text-center font-mono text-xs text-ink-400">
+                          All Kiosk POS &amp; cafeteria products are above low-stock thresholds.
+                        </div>
+                      ) : (
+                        <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                          {ecosystemKpis.lowStockPosItems.slice(0, 6).map((item) => (
+                            <div
+                              key={item.id}
+                              className="rounded-lg border border-ink-800 bg-ink-900/90 p-2.5 space-y-1"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="truncate font-mono text-xs font-semibold text-ink-100">
+                                  {item.imageIcon ? `${item.imageIcon} ` : ""}
+                                  {item.name}
+                                </span>
+                                <span
+                                  className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${
+                                    item.stock <= 0
+                                      ? "bg-rose-500/20 text-rose-300"
+                                      : "bg-amber-500/20 text-amber-300"
+                                  }`}
+                                >
+                                  {item.stock <= 0 ? "OUT OF STOCK" : `${item.stock} LEFT`}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between font-mono text-[10px] text-ink-400">
+                                <span>
+                                  {item.sku || "SKU"} · Min: {item.lowStockThreshold ?? 10}
+                                </span>
+                                <span className="text-ink-200">{money(item.price)}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setActiveModule("pos")}
+                      className="w-full rounded-md bg-ink-900 py-1.5 text-center font-mono text-[11px] font-semibold text-amber-300 ring-1 ring-ink-800 hover:bg-amber-500/15"
+                    >
+                      Open POS Inventory &amp; Restock →
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -2045,805 +2127,31 @@ function VescioNexusHub() {
         {/* VIEW 2: GYM & STRENGTH MODULE                                     */}
         {/* ================================================================= */}
         {activeModule === "gym" && (
-          <div className="min-w-0 max-w-full space-y-6">
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-ink-800 bg-ink-900/90 p-4">
-              <div className="min-w-0">
-                <div className="font-mono text-[10px] uppercase tracking-widest text-sky-400">
-                  Vescio Nexus · Module 02 ·{" "}
-                  {branchFilter === "All" ? "All Branches" : branchFilter}
-                </div>
-                <h2 className="font-display text-xl text-ink-100">
-                  Gym Memberships, Daily Check-Ins &amp; Strength Logs
-                </h2>
-                <p className="text-xs text-ink-400">
-                  Manage S&amp;C packages, daily gym floor check-ins, and personal record / RPE
-                  training logs for Academy athletes and external gym members.
-                </p>
-              </div>
-              <Button onClick={openEnrollGymModal}>+ New Gym / S&amp;C Membership</Button>
-            </div>
-
-            <Panel
-              title="Gym & Strength Roster"
-              meta={`${filteredGymMembers.length} enrolled athlete(s) & member(s)`}
-            >
-              {filteredGymMembers.length === 0 ? (
-                <EmptyState
-                  title="No Gym or Strength & Conditioning members enrolled yet"
-                  hint="Click '+ New Gym / S&C Membership' to enroll an Academy Player or External Gym Member."
-                />
-              ) : (
-                <div className="w-full max-w-full overflow-x-auto">
-                  <Table>
-                    <thead>
-                      <tr>
-                        <Th>Member / Athlete</Th>
-                        <Th>Type &amp; Branch</Th>
-                        <Th>Package &amp; Access</Th>
-                        <Th>Check-Ins &amp; Last Visit</Th>
-                        <Th>Workout Logs</Th>
-                        <Th>Status</Th>
-                        <Th className="text-right">Actions</Th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredGymMembers.map((m) => (
-                        <tr key={m.id} className="border-t border-ink-800/70">
-                          <Td>
-                            <div className="font-medium text-ink-100">{m.memberName}</div>
-                            <div className="font-mono text-[10px] text-ink-400">
-                              {m.phone || "No phone"} · Valid {m.startDate} → {m.expiryDate}
-                            </div>
-                          </Td>
-                          <Td>
-                            <Chip tone={m.memberType === "Academy Player" ? "court" : "info"}>
-                              {m.memberType}
-                            </Chip>
-                            <div className="mt-1 font-mono text-[10px] text-ink-400">
-                              {m.branch}
-                            </div>
-                          </Td>
-                          <Td>
-                            <div className="text-xs font-semibold text-ink-100">
-                              {m.packageType}
-                            </div>
-                            <div className="font-mono text-[10px] text-emerald-400">
-                              {money(m.monthlyFee)} ·{" "}
-                              {(m.totalSessionsIncluded ?? 0) >= 999
-                                ? "Unlimited Sessions"
-                                : `${m.sessionsRemaining ?? 0}/${m.totalSessionsIncluded ?? 10} sessions left`}
-                            </div>
-                          </Td>
-                          <Td>
-                            <div className="font-mono text-xs font-semibold text-ink-100">
-                              {m.totalCheckIns || 0} check-ins
-                            </div>
-                            <div className="font-mono text-[10px] text-ink-400">
-                              Last: {m.lastCheckInDate || "Never"}
-                            </div>
-                          </Td>
-                          <Td>
-                            <button
-                              type="button"
-                              onClick={() => setWorkoutModalMember(m)}
-                              className="inline-flex items-center gap-1.5 rounded bg-sky-500/15 px-2.5 py-1 font-mono text-[10px] font-semibold text-sky-300 ring-1 ring-sky-500/30 hover:bg-sky-500/25"
-                            >
-                              <Dumbbell className="h-3 w-3" />
-                              <span>{(m.workoutLogs || []).length} Workout Log(s)</span>
-                            </button>
-                          </Td>
-                          <Td>
-                            <Chip
-                              tone={
-                                m.status === "Active"
-                                  ? "ok"
-                                  : m.status === "Paused"
-                                    ? "warn"
-                                    : "danger"
-                              }
-                            >
-                              {m.status}
-                            </Chip>
-                          </Td>
-                          <Td className="text-right">
-                            <div className="inline-flex items-center gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => void handleGymCheckIn(m)}
-                                className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-2.5 py-1 font-mono text-[10px] font-bold text-emerald-300 ring-1 ring-emerald-500/40 hover:bg-emerald-500/30"
-                              >
-                                <UserCheck className="h-3 w-3" />
-                                <span>Check In</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setWorkoutModalMember(m)}
-                                className="rounded bg-ink-850 px-2 py-1 font-mono text-[10px] text-ink-200 ring-1 ring-ink-700 hover:bg-ink-800"
-                              >
-                                + Log Workout
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void deleteEntity("gymMembers", m.id)}
-                                className="rounded bg-ink-850 p-1 text-ink-400 hover:text-red-400"
-                                title="Delete member"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          </Td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </Table>
-                </div>
-              )}
-            </Panel>
-          </div>
+          <NexusGymModule
+            selectedBranch={branchFilter}
+            onSelectBranch={setBranchFilter}
+            externalEnrollOpen={gymModalOpen}
+            onExternalEnrollHandled={() => setGymModalOpen(false)}
+          />
         )}
 
         {/* ================================================================= */}
         {/* VIEW 3: PHYSIOTHERAPY & MEDICAL MODULE                            */}
         {/* ================================================================= */}
         {activeModule === "physio" && (
-          <div className="min-w-0 max-w-full space-y-6">
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-ink-800 bg-ink-900/90 p-4">
-              <div className="min-w-0">
-                <div className="font-mono text-[10px] uppercase tracking-widest text-rose-400">
-                  Vescio Nexus · Module 03 ·{" "}
-                  {branchFilter === "All" ? "All Branches" : branchFilter}
-                </div>
-                <h2 className="font-display text-xl text-ink-100">
-                  Physiotherapy, Injury Intake &amp; Return-to-Play (RTP)
-                </h2>
-                <p className="text-xs text-ink-400">
-                  Medical clearance statuses (Fit, Limited/Modified Training, Injured/Out) sync
-                  automatically with Academy player profiles.
-                </p>
-              </div>
-              <Button onClick={openPhysioIntakeModal}>+ New Injury Assessment Intake</Button>
-            </div>
-
-            {/* Active Physiotherapy & RTP Clinical Cases */}
-            <Panel
-              title="Physiotherapy Clinical Roster & Return-to-Play (RTP) Progression"
-              meta={`${filteredPhysioRecords.length} clinical record(s)`}
-            >
-              {filteredPhysioRecords.length === 0 ? (
-                <EmptyState
-                  title="No Physiotherapy or Injury Assessment records logged"
-                  hint="Click '+ New Injury Assessment Intake' to log an injury assessment, set Academy clearance status, and track Return-to-Play stages."
-                />
-              ) : (
-                <div className="w-full max-w-full overflow-x-auto">
-                  <Table>
-                    <thead>
-                      <tr>
-                        <Th>Patient / Athlete</Th>
-                        <Th>Injury &amp; Diagnosis</Th>
-                        <Th>Academy Medical Status</Th>
-                        <Th>Return-to-Play (RTP) Stage</Th>
-                        <Th>Sessions</Th>
-                        <Th className="text-right">Clinical Actions</Th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredPhysioRecords.map((rec) => (
-                        <tr key={rec.id} className="border-t border-ink-800/70">
-                          <Td>
-                            <div className="font-medium text-ink-100">{rec.patientName}</div>
-                            <div className="font-mono text-[10px] text-ink-400">
-                              {rec.patientType} {rec.team ? `· ${rec.team}` : ""} · {rec.branch}
-                            </div>
-                          </Td>
-                          <Td>
-                            <div className="text-xs font-semibold text-ink-100">
-                              {rec.injuryArea} ·{" "}
-                              <span className="text-rose-300">{rec.severity}</span>
-                            </div>
-                            <div className="text-xs text-ink-300">{rec.diagnosis}</div>
-                            {rec.restrictions && (
-                              <div className="mt-0.5 font-mono text-[10px] text-amber-300/90">
-                                Restriction: {rec.restrictions}
-                              </div>
-                            )}
-                          </Td>
-                          <Td>
-                            <select
-                              value={rec.medicalStatus}
-                              onChange={(e) =>
-                                void handleUpdatePhysioRtpAndStatus(
-                                  rec,
-                                  e.target.value as PlayerMedicalClearanceStatus,
-                                  e.target.value === "Fit" ? 5 : rec.rtpStage,
-                                )
-                              }
-                              className={`rounded-md px-2.5 py-1 font-mono text-xs font-bold ring-1 focus:outline-none ${
-                                rec.medicalStatus === "Fit"
-                                  ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30"
-                                  : rec.medicalStatus === "Limited"
-                                    ? "bg-amber-500/15 text-amber-300 ring-amber-500/30"
-                                    : "bg-red-500/15 text-red-300 ring-red-500/30"
-                              }`}
-                            >
-                              <option value="Fit" className="bg-ink-900 text-emerald-300">
-                                Fit (Cleared)
-                              </option>
-                              <option value="Limited" className="bg-ink-900 text-amber-300">
-                                Limited / Modified Training
-                              </option>
-                              <option value="Injured" className="bg-ink-900 text-red-300">
-                                Injured / Out
-                              </option>
-                            </select>
-                          </Td>
-                          <Td>
-                            <div className="flex items-center gap-1.5">
-                              {[1, 2, 3, 4, 5].map((st) => (
-                                <button
-                                  key={st}
-                                  type="button"
-                                  onClick={() =>
-                                    void handleUpdatePhysioRtpAndStatus(
-                                      rec,
-                                      st === 5 ? "Fit" : rec.medicalStatus,
-                                      st as 1 | 2 | 3 | 4 | 5,
-                                    )
-                                  }
-                                  className={`h-6 w-6 rounded font-mono text-[10px] font-bold transition-all ${
-                                    rec.rtpStage >= st
-                                      ? st === 5
-                                        ? "bg-emerald-500 text-ink-950"
-                                        : "bg-court-500 text-ink-950"
-                                      : "bg-ink-850 text-ink-400 hover:bg-ink-800"
-                                  }`}
-                                  title={RTP_STAGES[st - 1]?.title}
-                                >
-                                  {st}
-                                </button>
-                              ))}
-                            </div>
-                            <div className="mt-1 font-mono text-[10px] text-ink-400">
-                              {RTP_STAGES[rec.rtpStage - 1]?.title}
-                            </div>
-                          </Td>
-                          <Td>
-                            <span className="font-mono text-xs text-ink-200">
-                              {(rec.treatmentSessions || []).length} session(s)
-                            </span>
-                          </Td>
-                          <Td className="text-right">
-                            <div className="inline-flex items-center gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => setActivePhysioRecord(rec)}
-                                className="rounded bg-rose-500/15 px-2.5 py-1 font-mono text-[10px] font-semibold text-rose-300 ring-1 ring-rose-500/30 hover:bg-rose-500/25"
-                              >
-                                SOAP Notes &amp; Sessions
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void deleteEntity("physioRecords", rec.id)}
-                                className="rounded bg-ink-850 p-1 text-ink-400 hover:text-red-400"
-                                title="Delete clinical record"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                          </Td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </Table>
-                </div>
-              )}
-            </Panel>
-
-            {/* Direct Academy Roster Medical Status Board */}
-            <Panel
-              title="Academy Players Live Medical Status Board (Synced with Players Module)"
-              meta={`${players.length} Academy player(s)`}
-            >
-              {players.length === 0 ? (
-                <EmptyState
-                  title="No Academy players registered yet"
-                  hint="Players registered in Vescio Vector Academy appear here automatically for instant medical clearance syncing."
-                />
-              ) : (
-                <div className="w-full max-w-full overflow-x-auto">
-                  <Table>
-                    <thead>
-                      <tr>
-                        <Th>Player Name</Th>
-                        <Th>Category &amp; Team(s)</Th>
-                        <Th>Branch</Th>
-                        <Th>Medical Notes</Th>
-                        <Th>Synced Medical Clearance</Th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {players
-                        .filter(
-                          (p) =>
-                            branchFilter === "All" ||
-                            (p.branch || "").toLowerCase() === branchFilter.toLowerCase(),
-                        )
-                        .slice(0, 25)
-                        .map((p) => {
-                          const medStatus: PlayerMedicalClearanceStatus = p.medicalStatus || "Fit";
-                          return (
-                            <tr key={p.id} className="border-t border-ink-800/70">
-                              <Td>
-                                <div className="font-medium text-ink-100">{p.name}</div>
-                              </Td>
-                              <Td>
-                                <span className="font-mono text-xs text-ink-300">
-                                  {p.category} · {(p.teams || []).join(", ") || "Unassigned"}
-                                </span>
-                              </Td>
-                              <Td>
-                                <span className="font-mono text-xs text-ink-400">{p.branch}</span>
-                              </Td>
-                              <Td>
-                                <span className="text-xs text-ink-300">
-                                  {p.medicalNotes || "No restrictions recorded"}
-                                </span>
-                              </Td>
-                              <Td>
-                                <div className="inline-flex items-center gap-1.5">
-                                  {(["Fit", "Limited", "Injured"] as const).map((statusOpt) => (
-                                    <button
-                                      key={statusOpt}
-                                      type="button"
-                                      onClick={() => {
-                                        void syncPlayerMedicalStatusToAcademy(
-                                          p.id,
-                                          statusOpt,
-                                          statusOpt === "Fit" ? 5 : statusOpt === "Limited" ? 3 : 1,
-                                        );
-                                        toast.success(
-                                          `Synced ${p.name}'s Academy medical status to "${statusOpt}".`,
-                                        );
-                                      }}
-                                      className={`rounded px-2.5 py-1 font-mono text-[10px] font-bold transition-all ${
-                                        medStatus === statusOpt
-                                          ? statusOpt === "Fit"
-                                            ? "bg-emerald-500 text-ink-950"
-                                            : statusOpt === "Limited"
-                                              ? "bg-amber-400 text-ink-950"
-                                              : "bg-red-500 text-white"
-                                          : "bg-ink-850 text-ink-400 hover:bg-ink-800"
-                                      }`}
-                                    >
-                                      {statusOpt === "Fit"
-                                        ? "Fit"
-                                        : statusOpt === "Limited"
-                                          ? "Limited"
-                                          : "Injured / Out"}
-                                    </button>
-                                  ))}
-                                </div>
-                              </Td>
-                            </tr>
-                          );
-                        })}
-                    </tbody>
-                  </Table>
-                </div>
-              )}
-            </Panel>
-          </div>
+          <NexusPhysioModule
+            selectedBranch={branchFilter}
+            onSelectBranch={setBranchFilter}
+            externalIntakeOpen={physioIntakeOpen}
+            onExternalIntakeHandled={() => setPhysioIntakeOpen(false)}
+          />
         )}
 
         {/* ================================================================= */}
         {/* VIEW 4: KIOSK POS (POINT OF SALE)                                 */}
         {/* ================================================================= */}
         {activeModule === "pos" && (
-          <div className="min-w-0 max-w-full space-y-6">
-            {/* POS Top Bar & Daily Register Summary Strip */}
-            <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-ink-800 bg-ink-900/90 p-4">
-              <div className="min-w-0">
-                <div className="font-mono text-[10px] uppercase tracking-widest text-amber-400">
-                  Vescio Nexus · Module 04 ·{" "}
-                  {activeBranchObj?.posRegisterName || "Touch POS Terminal"} (
-                  {branchFilter === "All" ? "All Branches" : branchFilter})
-                </div>
-                <h2 className="font-display text-xl text-ink-100">
-                  On-Site Kiosk Point of Sale (POS)
-                </h2>
-                <p className="text-xs text-ink-400">
-                  Instant checkout for drinks, snacks, academy uniforms, court walk-in passes &amp;
-                  physio tape.
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="flex flex-wrap items-center gap-4 rounded-lg border border-ink-800 bg-ink-950 px-4 py-2 font-mono text-xs">
-                  <div>
-                    <span className="text-[10px] text-ink-400 block">Today Cash</span>
-                    <span className="font-bold text-emerald-400">
-                      {money(posDailyRegister.cashTotal)}
-                    </span>
-                  </div>
-                  <div className="h-6 w-px bg-ink-800" />
-                  <div>
-                    <span className="text-[10px] text-ink-400 block">Today Card</span>
-                    <span className="font-bold text-sky-400">
-                      {money(posDailyRegister.cardTotal)}
-                    </span>
-                  </div>
-                  <div className="h-6 w-px bg-ink-800" />
-                  <div>
-                    <span className="text-[10px] text-ink-400 block">Charged to Account</span>
-                    <span className="font-bold text-amber-400">
-                      {money(posDailyRegister.accountChargeTotal)}
-                    </span>
-                  </div>
-                </div>
-
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setNewCatalogItem((prev) => ({
-                      ...prev,
-                      branch: branchFilter !== "All" ? branchFilter : "All",
-                    }));
-                    setPosCatalogModalOpen(true);
-                  }}
-                >
-                  + Add POS Product
-                </Button>
-              </div>
-            </div>
-
-            {/* POS Main Touch Interface: Left Product Grid + Right Cart & Checkout */}
-            <div className="grid min-w-0 max-w-full gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
-              {/* Left: Product Grid */}
-              <div className="min-w-0 space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {POS_CATEGORIES.map((cat) => (
-                      <button
-                        key={cat}
-                        type="button"
-                        onClick={() => setPosCategory(cat)}
-                        className={`rounded-lg px-3 py-2 font-mono text-xs font-semibold transition-all ${
-                          posCategory === cat
-                            ? "bg-amber-400 text-ink-950 shadow-sm"
-                            : "bg-ink-900 text-ink-300 ring-1 ring-ink-800 hover:bg-ink-850"
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
-                    <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-ink-400" />
-                    <input
-                      type="text"
-                      value={posSearch}
-                      onChange={(e) => setPosSearch(e.target.value)}
-                      placeholder="Search item or SKU..."
-                      className="w-full rounded-lg border border-ink-800 bg-ink-900 py-2 pl-9 pr-3 text-xs text-ink-100 placeholder:text-ink-500 focus:border-amber-400 focus:outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {filteredPosCatalog.map((item) => {
-                    const inCartQty =
-                      posCart.find((line) => line.itemId === item.id)?.quantity || 0;
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => addToPosCart(item)}
-                        className={`group relative flex min-w-0 flex-col justify-between rounded-xl border p-4 text-left transition-all cursor-pointer ${
-                          inCartQty > 0
-                            ? "border-amber-400 bg-amber-500/10 ring-1 ring-amber-400/40"
-                            : "border-ink-800 bg-ink-900/90 hover:border-amber-500/40 hover:bg-ink-850"
-                        }`}
-                      >
-                        <div className="min-w-0">
-                          <div className="flex items-start justify-between gap-2">
-                            <span className="truncate font-mono text-[10px] uppercase tracking-wider text-ink-400">
-                              {item.category}
-                            </span>
-                            {inCartQty > 0 && (
-                              <span className="shrink-0 rounded-full bg-amber-400 px-2 py-0.5 font-mono text-[10px] font-bold text-ink-950">
-                                {inCartQty} in cart
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-1.5 font-semibold text-sm text-ink-100 group-hover:text-amber-300">
-                            {item.name}
-                          </div>
-                        </div>
-
-                        <div className="mt-4 flex items-baseline justify-between border-t border-ink-800/80 pt-3">
-                          <span className="font-display text-lg text-emerald-400">
-                            {money(item.price)}
-                          </span>
-                          <span className="font-mono text-[10px] text-ink-400">
-                            {item.stock >= 900 ? "Unlimited Pass" : `Stock: ${item.stock}`}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Right: Active POS Cart & Checkout Terminal */}
-              <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900 p-5 space-y-5 h-fit lg:sticky lg:top-32">
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between border-b border-ink-800 pb-3">
-                    <div className="flex items-center gap-2">
-                      <ShoppingCart className="h-4 w-4 text-amber-400" />
-                      <h3 className="font-display text-base text-ink-100">Current Order Cart</h3>
-                    </div>
-                    {posCart.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setPosCart([])}
-                        className="font-mono text-[10px] text-red-400 hover:underline"
-                      >
-                        Clear Cart
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Customer / Account Selector */}
-                  <div className="space-y-2 rounded-lg border border-ink-800 bg-ink-950/70 p-3">
-                    <div className="font-mono text-[10px] uppercase tracking-wider text-ink-400">
-                      Customer / Account Assignment
-                    </div>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      {(["Walk-In", "Academy Player", "Gym Member"] as const).map((typeOpt) => (
-                        <button
-                          key={typeOpt}
-                          type="button"
-                          onClick={() => setPosCustomerType(typeOpt)}
-                          className={`rounded py-1.5 font-mono text-[10px] font-semibold transition-all ${
-                            posCustomerType === typeOpt
-                              ? "bg-court-500 text-ink-950"
-                              : "bg-ink-900 text-ink-300 hover:bg-ink-850"
-                          }`}
-                        >
-                          {typeOpt}
-                        </button>
-                      ))}
-                    </div>
-
-                    {posCustomerType === "Walk-In" && (
-                      <Input
-                        value={posWalkInName}
-                        onChange={setPosWalkInName}
-                        placeholder="Walk-in customer name (optional)"
-                      />
-                    )}
-
-                    {posCustomerType === "Academy Player" && (
-                      <Select
-                        value={posLinkedPlayerId}
-                        onChange={setPosLinkedPlayerId}
-                        options={[
-                          { label: "— Select Academy Player —", value: "" },
-                          ...players.map((p) => ({
-                            label: `${p.name} (${p.category} · Bal: ${money(p.balance)})`,
-                            value: p.id,
-                          })),
-                        ]}
-                      />
-                    )}
-
-                    {posCustomerType === "Gym Member" && (
-                      <Select
-                        value={posLinkedGymMemberId}
-                        onChange={setPosLinkedGymMemberId}
-                        options={[
-                          { label: "— Select Gym Member —", value: "" },
-                          ...gymMembers.map((m) => ({
-                            label: `${m.memberName} (${m.packageType})`,
-                            value: m.id,
-                          })),
-                        ]}
-                      />
-                    )}
-                  </div>
-
-                  {/* Cart Line Items */}
-                  {posCart.length === 0 ? (
-                    <div className="rounded-lg border border-dashed border-ink-800 py-10 text-center">
-                      <ShoppingBag className="mx-auto h-7 w-7 text-ink-500" />
-                      <div className="mt-2 text-xs text-ink-400">
-                        Tap any item on the left to add it to the POS cart
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="max-h-[280px] space-y-2 overflow-y-auto pr-1">
-                      {posCart.map((line) => (
-                        <div
-                          key={line.itemId}
-                          className="flex items-center justify-between gap-2 rounded-lg border border-ink-800 bg-ink-950/80 px-3 py-2"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-xs font-medium text-ink-100">
-                              {line.name}
-                            </div>
-                            <div className="font-mono text-[10px] text-ink-400">
-                              {money(line.unitPrice)} each
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => updatePosCartQty(line.itemId, -1)}
-                              className="grid h-6 w-6 place-items-center rounded bg-ink-850 text-ink-200 hover:bg-ink-800"
-                            >
-                              <Minus className="h-3 w-3" />
-                            </button>
-                            <span className="w-6 text-center font-mono text-xs font-bold text-ink-100">
-                              {line.quantity}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => updatePosCartQty(line.itemId, 1)}
-                              className="grid h-6 w-6 place-items-center rounded bg-ink-850 text-ink-200 hover:bg-ink-800"
-                            >
-                              <Plus className="h-3 w-3" />
-                            </button>
-                          </div>
-                          <div className="w-16 text-right font-mono text-xs font-semibold text-emerald-400">
-                            {money(line.subtotal)}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Totals & 3 Instant Payment Buttons */}
-                <div className="space-y-3 border-t border-ink-800 pt-4">
-                  <div className="flex items-center justify-between text-xs text-ink-300">
-                    <span>Subtotal</span>
-                    <span className="font-mono">{money(posCartTotals.subtotal)}</span>
-                  </div>
-                  <div className="flex items-center justify-between gap-3 text-xs text-ink-300">
-                    <span>Discount ($)</span>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={posDiscount}
-                      onChange={(e) => setPosDiscount(e.target.value)}
-                      className="w-24 rounded border border-ink-800 bg-ink-950 px-2 py-1 text-right font-mono text-xs text-ink-100"
-                    />
-                  </div>
-                  <div className="flex items-baseline justify-between border-t border-ink-800 pt-2">
-                    <span className="font-mono text-xs uppercase tracking-wider text-ink-300">
-                      Total Due
-                    </span>
-                    <span className="font-display text-2xl text-emerald-400">
-                      {money(posCartTotals.total)}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => void handleCompletePosCheckout("Cash")}
-                      className="flex items-center justify-center gap-2 rounded-lg bg-emerald-500 py-3 font-mono text-xs font-bold text-ink-950 shadow-sm hover:bg-emerald-400 cursor-pointer"
-                    >
-                      <Wallet className="h-4 w-4" />
-                      <span>Pay Cash</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleCompletePosCheckout("Card")}
-                      className="flex items-center justify-center gap-2 rounded-lg bg-sky-500 py-3 font-mono text-xs font-bold text-ink-950 shadow-sm hover:bg-sky-400 cursor-pointer"
-                    >
-                      <CreditCard className="h-4 w-4" />
-                      <span>Pay Card</span>
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void handleCompletePosCheckout("Charge to Account")}
-                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-amber-400 py-2.5 font-mono text-xs font-bold text-ink-950 shadow-sm hover:bg-amber-300 cursor-pointer"
-                  >
-                    <Users className="h-4 w-4" />
-                    <span>Charge to Player / Member Account</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* POS Daily Register & Receipt History Table */}
-            <Panel
-              title="Daily Register Sales Summary & Receipt History"
-              meta={`${filteredPosTransactions.length} completed receipt(s)`}
-            >
-              {filteredPosTransactions.length === 0 ? (
-                <EmptyState
-                  title="No Kiosk POS receipts recorded yet"
-                  hint="Completed Cash, Card, and Account Charge transactions appear here with printable receipts."
-                />
-              ) : (
-                <div className="w-full max-w-full overflow-x-auto">
-                  <Table>
-                    <thead>
-                      <tr>
-                        <Th>Receipt #</Th>
-                        <Th>Date &amp; Time</Th>
-                        <Th>Customer</Th>
-                        <Th>Items Purchased</Th>
-                        <Th>Payment Method</Th>
-                        <Th>Total</Th>
-                        <Th className="text-right">Receipt</Th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredPosTransactions.map((tx) => (
-                        <tr key={tx.id} className="border-t border-ink-800/70">
-                          <Td>
-                            <span className="font-mono text-xs font-bold text-amber-300">
-                              {tx.receiptNumber}
-                            </span>
-                          </Td>
-                          <Td>
-                            <span className="font-mono text-xs text-ink-200">
-                              {tx.date} · {tx.time}
-                            </span>
-                          </Td>
-                          <Td>
-                            <div className="font-medium text-ink-100">{tx.customerName}</div>
-                            <div className="font-mono text-[10px] text-ink-400">
-                              {tx.customerType} · {tx.branch}
-                            </div>
-                          </Td>
-                          <Td>
-                            <div className="text-xs text-ink-200">
-                              {(tx.items || []).map((i) => `${i.quantity}x ${i.name}`).join(", ")}
-                            </div>
-                          </Td>
-                          <Td>
-                            <Chip
-                              tone={
-                                tx.paymentMethod === "Cash"
-                                  ? "ok"
-                                  : tx.paymentMethod === "Card"
-                                    ? "info"
-                                    : "warn"
-                              }
-                            >
-                              {tx.paymentMethod}
-                            </Chip>
-                          </Td>
-                          <Td>
-                            <span className="font-mono text-xs font-bold text-emerald-400">
-                              {money(tx.total)}
-                            </span>
-                          </Td>
-                          <Td className="text-right">
-                            <button
-                              type="button"
-                              onClick={() => setPosReceiptModalTx(tx)}
-                              className="inline-flex items-center gap-1 rounded bg-ink-850 px-2.5 py-1 font-mono text-[10px] text-ink-200 ring-1 ring-ink-700 hover:bg-ink-800"
-                            >
-                              <Printer className="h-3 w-3 text-court-400" />
-                              <span>View Receipt</span>
-                            </button>
-                          </Td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </Table>
-                </div>
-              )}
-            </Panel>
-          </div>
+          <NexusPosModule selectedBranch={branchFilter} onSelectBranch={setBranchFilter} />
         )}
       </main>
 
@@ -3135,752 +2443,6 @@ function VescioNexusHub() {
             </Button>
           </div>
         </div>
-      </Modal>
-
-      {/* =================================================================== */}
-      {/* MODAL 2: ENROLL GYM / S&C MEMBER                                    */}
-      {/* =================================================================== */}
-      <Modal
-        open={gymModalOpen}
-        title="Enroll Gym & Strength Member"
-        meta="Supports both Academy Players and External Gym Members"
-        onClose={() => setGymModalOpen(false)}
-      >
-        <div className="p-4 space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Member Type">
-              <Select
-                value={gymForm.memberType}
-                onChange={(v) =>
-                  setGymForm({ ...gymForm, memberType: v as GymMember["memberType"] })
-                }
-                options={[
-                  { label: "Academy Player", value: "Academy Player" },
-                  { label: "External Gym Member", value: "External Member" },
-                ]}
-              />
-            </Field>
-
-            {gymForm.memberType === "Academy Player" ? (
-              <Field label="Select Academy Player">
-                <Select
-                  value={gymForm.linkedPlayerId}
-                  onChange={(pid) => {
-                    const p = players.find((x) => x.id === pid);
-                    setGymForm({
-                      ...gymForm,
-                      linkedPlayerId: pid,
-                      memberName: p ? p.name : gymForm.memberName,
-                      phone: p ? p.parentPhone || p.phone || "" : gymForm.phone,
-                      branch: p?.branch || gymForm.branch,
-                    });
-                  }}
-                  options={[
-                    { label: "— Choose Player —", value: "" },
-                    ...players.map((p) => ({
-                      label: `${p.name} (${p.category})`,
-                      value: p.id,
-                    })),
-                  ]}
-                />
-              </Field>
-            ) : (
-              <Field label="Member Full Name">
-                <Input
-                  value={gymForm.memberName}
-                  onChange={(v) => setGymForm({ ...gymForm, memberName: v })}
-                  placeholder="Enter full name"
-                />
-              </Field>
-            )}
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="Phone">
-              <Input
-                value={gymForm.phone}
-                onChange={(v) => setGymForm({ ...gymForm, phone: v })}
-                placeholder="+961 70 000 000"
-              />
-            </Field>
-            <Field label="Branch">
-              <Select
-                value={gymForm.branch}
-                onChange={(v) => setGymForm({ ...gymForm, branch: v })}
-                options={
-                  branches.length > 0
-                    ? branches.map((b) => ({ label: b.name, value: b.name }))
-                    : [{ label: "Main Branch", value: "Main Branch" }]
-                }
-              />
-            </Field>
-            <Field label="S&C / Gym Package">
-              <Select
-                value={gymForm.packageType}
-                onChange={(v) => {
-                  const pkg = v as GymMember["packageType"];
-                  const fee =
-                    pkg === "Monthly Unlimited"
-                      ? "75"
-                      : pkg === "10-Session S&C Pack"
-                        ? "90"
-                        : pkg === "Athlete Pro S&C"
-                          ? "65"
-                          : "12";
-                  const sess =
-                    pkg === "Monthly Unlimited"
-                      ? "999"
-                      : pkg === "10-Session S&C Pack"
-                        ? "10"
-                        : pkg === "Athlete Pro S&C"
-                          ? "12"
-                          : "1";
-                  setGymForm({
-                    ...gymForm,
-                    packageType: pkg,
-                    monthlyFee: fee,
-                    totalSessionsIncluded: sess,
-                  });
-                }}
-                options={[
-                  { label: "Athlete Pro S&C (12 Sessions)", value: "Athlete Pro S&C" },
-                  { label: "10-Session S&C Pack", value: "10-Session S&C Pack" },
-                  { label: "Monthly Unlimited Gym", value: "Monthly Unlimited" },
-                  { label: "Walk-In Day Pass", value: "Walk-In Day Pass" },
-                ]}
-              />
-            </Field>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="Package Fee ($)">
-              <Input
-                type="number"
-                value={gymForm.monthlyFee}
-                onChange={(v) => setGymForm({ ...gymForm, monthlyFee: v })}
-              />
-            </Field>
-            <Field label="Start Date">
-              <Input
-                type="date"
-                value={gymForm.startDate}
-                onChange={(v) => setGymForm({ ...gymForm, startDate: v })}
-              />
-            </Field>
-            <Field label="Expiry Date">
-              <Input
-                type="date"
-                value={gymForm.expiryDate}
-                onChange={(v) => setGymForm({ ...gymForm, expiryDate: v })}
-              />
-            </Field>
-          </div>
-
-          <Field label="Payment Method">
-            <Select
-              value={gymForm.paymentMethod}
-              onChange={(v) =>
-                setGymForm({
-                  ...gymForm,
-                  paymentMethod: v as typeof gymForm.paymentMethod,
-                })
-              }
-              options={[
-                { label: "Cash (Post to Ledger)", value: "Cash" },
-                { label: "Card (Post to Ledger)", value: "Card" },
-                { label: "Charge to Player Account", value: "Charge to Player Account" },
-              ]}
-            />
-          </Field>
-
-          <div className="flex items-center justify-end gap-2 pt-2">
-            <Button variant="ghost" onClick={() => setGymModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={() => void handleCreateGymMember()}>Enroll Member</Button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* =================================================================== */}
-      {/* MODAL 3: GYM WORKOUT & STRENGTH LOG DRAWER                          */}
-      {/* =================================================================== */}
-      <Modal
-        open={Boolean(workoutModalMember)}
-        title={
-          workoutModalMember
-            ? `Strength & Conditioning Logs · ${workoutModalMember.memberName}`
-            : "Workout Logs"
-        }
-        meta="Track exercises, sets/reps/load, RPE, and Personal Records (1RM)"
-        onClose={() => setWorkoutModalMember(null)}
-      >
-        {workoutModalMember && (
-          <div className="p-4 space-y-4">
-            <div className="rounded-lg border border-ink-800 bg-ink-950/70 p-3 space-y-3">
-              <div className="font-mono text-xs font-semibold text-sky-300">
-                + Log New Strength / Conditioning Session
-              </div>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <Field label="Date">
-                  <Input
-                    type="date"
-                    value={workoutForm.date}
-                    onChange={(v) => setWorkoutForm({ ...workoutForm, date: v })}
-                  />
-                </Field>
-                <Field label="Focus Area">
-                  <Select
-                    value={workoutForm.focusArea}
-                    onChange={(v) =>
-                      setWorkoutForm({
-                        ...workoutForm,
-                        focusArea: v as GymWorkoutLog["focusArea"],
-                      })
-                    }
-                    options={[
-                      { label: "Lower Body Power", value: "Lower Body Power" },
-                      { label: "Upper Body Strength", value: "Upper Body Strength" },
-                      { label: "Plyometrics & Speed", value: "Plyometrics & Speed" },
-                      { label: "Core & Mobility", value: "Core & Mobility" },
-                      {
-                        label: "Energy System Conditioning",
-                        value: "Energy System Conditioning",
-                      },
-                    ]}
-                  />
-                </Field>
-                <Field label="Session RPE (1-10)">
-                  <Input
-                    type="number"
-                    value={workoutForm.rpe}
-                    onChange={(v) => setWorkoutForm({ ...workoutForm, rpe: v })}
-                  />
-                </Field>
-              </div>
-              <Field label="Exercises Performed">
-                <Input
-                  value={workoutForm.exercisesSummary}
-                  onChange={(v) => setWorkoutForm({ ...workoutForm, exercisesSummary: v })}
-                  placeholder="e.g. Back Squat, Nordic Hamstring Curl, Depth Jumps"
-                />
-              </Field>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="Sets × Reps @ Load (kg)">
-                  <Input
-                    value={workoutForm.setsRepsLoad}
-                    onChange={(v) => setWorkoutForm({ ...workoutForm, setsRepsLoad: v })}
-                    placeholder="e.g. 4x6 @ 100kg · 3x8 BW"
-                  />
-                </Field>
-                <Field label="Personal Record (PR) Achieved (Optional)">
-                  <Input
-                    value={workoutForm.personalRecord}
-                    onChange={(v) => setWorkoutForm({ ...workoutForm, personalRecord: v })}
-                    placeholder="e.g. Trap Bar Deadlift 125kg PR"
-                  />
-                </Field>
-              </div>
-              <div className="flex justify-end">
-                <Button onClick={() => void handleAddWorkoutLog()}>Save Workout Log</Button>
-              </div>
-            </div>
-
-            <div className="space-y-2 max-h-[280px] overflow-y-auto">
-              {(workoutModalMember.workoutLogs || []).length === 0 ? (
-                <div className="text-center py-6 font-mono text-xs text-ink-400">
-                  No workout logs recorded for {workoutModalMember.memberName} yet.
-                </div>
-              ) : (
-                (workoutModalMember.workoutLogs || []).map((log) => (
-                  <div
-                    key={log.id}
-                    className="rounded-lg border border-ink-800 bg-ink-900 p-3 space-y-1"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono text-xs font-bold text-sky-300">
-                        {log.date} · {log.focusArea}
-                      </span>
-                      <span className="font-mono text-[10px] text-ink-300">
-                        RPE {log.rpe}/10 · {log.coachName}
-                      </span>
-                    </div>
-                    <div className="text-xs font-medium text-ink-100">{log.exercisesSummary}</div>
-                    <div className="font-mono text-[11px] text-ink-300">{log.setsRepsLoad}</div>
-                    {log.personalRecord && (
-                      <div className="inline-block rounded bg-amber-400/20 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300">
-                        ★ PR: {log.personalRecord}
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        )}
-      </Modal>
-
-      {/* =================================================================== */}
-      {/* MODAL 4: PHYSIOTHERAPY INJURY ASSESSMENT INTAKE                     */}
-      {/* =================================================================== */}
-      <Modal
-        open={physioIntakeOpen}
-        title="New Physiotherapy & Injury Assessment Intake"
-        meta="Automatically syncs clearance status (Fit, Limited, Injured) with the Academy Player Roster"
-        onClose={() => setPhysioIntakeOpen(false)}
-      >
-        <div className="p-4 space-y-4">
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="Patient Type">
-              <Select
-                value={physioForm.patientType}
-                onChange={(v) =>
-                  setPhysioForm({
-                    ...physioForm,
-                    patientType: v as PhysioRecord["patientType"],
-                  })
-                }
-                options={[
-                  { label: "Academy Player", value: "Academy Player" },
-                  { label: "External Patient", value: "External Patient" },
-                ]}
-              />
-            </Field>
-
-            {physioForm.patientType === "Academy Player" ? (
-              <Field label="Select Academy Player">
-                <Select
-                  value={physioForm.linkedPlayerId}
-                  onChange={(pid) => {
-                    const p = players.find((x) => x.id === pid);
-                    setPhysioForm({
-                      ...physioForm,
-                      linkedPlayerId: pid,
-                      patientName: p ? p.name : physioForm.patientName,
-                      team: p?.teams?.[0] || "",
-                      phone: p ? p.parentPhone || p.phone || "" : physioForm.phone,
-                      branch: p?.branch || physioForm.branch,
-                    });
-                  }}
-                  options={[
-                    { label: "— Choose Academy Player —", value: "" },
-                    ...players.map((p) => ({
-                      label: `${p.name} (${p.category} · ${(p.teams || []).join(", ") || "No team"})`,
-                      value: p.id,
-                    })),
-                  ]}
-                />
-              </Field>
-            ) : (
-              <Field label="Patient Full Name">
-                <Input
-                  value={physioForm.patientName}
-                  onChange={(v) => setPhysioForm({ ...physioForm, patientName: v })}
-                  placeholder="Enter patient name"
-                />
-              </Field>
-            )}
-
-            <Field label="Facility Branch">
-              <Select
-                value={physioForm.branch}
-                onChange={(v) => setPhysioForm({ ...physioForm, branch: v })}
-                options={
-                  branches.length > 0
-                    ? branches.map((b) => ({ label: b.name, value: b.name }))
-                    : [{ label: "Main Branch", value: "Main Branch" }]
-                }
-              />
-            </Field>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="Injury Location / Body Area">
-              <Select
-                value={physioForm.injuryArea}
-                onChange={(v) =>
-                  setPhysioForm({
-                    ...physioForm,
-                    injuryArea: v as PhysioRecord["injuryArea"],
-                  })
-                }
-                options={[
-                  { label: "Ankle / Foot", value: "Ankle / Foot" },
-                  { label: "Knee / ACL / Meniscus", value: "Knee / ACL / Meniscus" },
-                  { label: "Hamstring / Groin", value: "Hamstring / Groin" },
-                  { label: "Shoulder / Rotator Cuff", value: "Shoulder / Rotator Cuff" },
-                  { label: "Lumbar / Lower Back", value: "Lumbar / Lower Back" },
-                  { label: "Wrist / Hand", value: "Wrist / Hand" },
-                  { label: "Concussion / General", value: "Concussion / General" },
-                ]}
-              />
-            </Field>
-            <Field label="Severity">
-              <Select
-                value={physioForm.severity}
-                onChange={(v) =>
-                  setPhysioForm({ ...physioForm, severity: v as PhysioRecord["severity"] })
-                }
-                options={[
-                  { label: "Mild (Grade 1)", value: "Mild (Grade 1)" },
-                  { label: "Moderate (Grade 2)", value: "Moderate (Grade 2)" },
-                  { label: "Severe (Grade 3)", value: "Severe (Grade 3)" },
-                ]}
-              />
-            </Field>
-            <Field label="Synced Academy Clearance Status">
-              <Select
-                value={physioForm.medicalStatus}
-                onChange={(v) =>
-                  setPhysioForm({
-                    ...physioForm,
-                    medicalStatus: v as PlayerMedicalClearanceStatus,
-                  })
-                }
-                options={[
-                  { label: "Limited / Modified Training", value: "Limited" },
-                  { label: "Injured / Out", value: "Injured" },
-                  { label: "Fit (Cleared)", value: "Fit" },
-                ]}
-              />
-            </Field>
-          </div>
-
-          <Field label="Clinical Diagnosis & Assessment">
-            <Input
-              value={physioForm.diagnosis}
-              onChange={(v) => setPhysioForm({ ...physioForm, diagnosis: v })}
-              placeholder="e.g. Grade 1 Lateral Ankle Sprain (ATFL)"
-            />
-          </Field>
-
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="Return-to-Play (RTP) Stage (1-5)">
-              <Select
-                value={String(physioForm.rtpStage)}
-                onChange={(v) =>
-                  setPhysioForm({
-                    ...physioForm,
-                    rtpStage: Number(v) as 1 | 2 | 3 | 4 | 5,
-                  })
-                }
-                options={RTP_STAGES.map((s) => ({
-                  label: s.title,
-                  value: String(s.stage),
-                }))}
-              />
-            </Field>
-            <Field label="Estimated Return Date">
-              <Input
-                type="date"
-                value={physioForm.estimatedReturnDate}
-                onChange={(v) => setPhysioForm({ ...physioForm, estimatedReturnDate: v })}
-              />
-            </Field>
-            <Field label="Lead Physiotherapist">
-              <Input
-                value={physioForm.therapistName}
-                onChange={(v) => setPhysioForm({ ...physioForm, therapistName: v })}
-              />
-            </Field>
-          </div>
-
-          <Field label="Training Restrictions & Coaching Notes">
-            <Textarea
-              rows={2}
-              value={physioForm.restrictions}
-              onChange={(v) => setPhysioForm({ ...physioForm, restrictions: v })}
-              placeholder="Specify load limits, non-contact rules, or taping requirements for coaches..."
-            />
-          </Field>
-
-          <div className="flex items-center justify-end gap-2 pt-2">
-            <Button variant="ghost" onClick={() => setPhysioIntakeOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={() => void handleCreatePhysioIntake()}>
-              Save Intake &amp; Sync Academy Status
-            </Button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* =================================================================== */}
-      {/* MODAL 5: PHYSIO TREATMENT SESSIONS & THERAPIST SOAP NOTES           */}
-      {/* =================================================================== */}
-      <Modal
-        open={Boolean(activePhysioRecord)}
-        title={
-          activePhysioRecord
-            ? `Clinical Treatment & SOAP Notes · ${activePhysioRecord.patientName}`
-            : "Treatment Sessions"
-        }
-        meta="Schedule or log physiotherapy treatment sessions and pain progression"
-        onClose={() => setActivePhysioRecord(null)}
-      >
-        {activePhysioRecord && (
-          <div className="p-4 space-y-4">
-            <div className="rounded-lg border border-ink-800 bg-ink-950/70 p-3 space-y-3">
-              <div className="font-mono text-xs font-semibold text-rose-300">
-                + Record Treatment Session &amp; Therapist SOAP Note
-              </div>
-              <div className="grid gap-3 sm:grid-cols-3">
-                <Field label="Date">
-                  <Input
-                    type="date"
-                    value={treatmentForm.date}
-                    onChange={(v) => setTreatmentForm({ ...treatmentForm, date: v })}
-                  />
-                </Field>
-                <Field label="Modality">
-                  <Select
-                    value={treatmentForm.modality}
-                    onChange={(v) =>
-                      setTreatmentForm({
-                        ...treatmentForm,
-                        modality: v as PhysioTreatmentSession["modality"],
-                      })
-                    }
-                    options={[
-                      {
-                        label: "Manual Therapy & Mobilization",
-                        value: "Manual Therapy & Mobilization",
-                      },
-                      {
-                        label: "Dry Needling / Electrotherapy",
-                        value: "Dry Needling / Electrotherapy",
-                      },
-                      { label: "Cryotherapy & Compression", value: "Cryotherapy & Compression" },
-                      { label: "Rehab Gym Load Protocol", value: "Rehab Gym Load Protocol" },
-                      {
-                        label: "Return-to-Play Biomechanical Test",
-                        value: "Return-to-Play Biomechanical Test",
-                      },
-                    ]}
-                  />
-                </Field>
-                <Field label="Pain Score (0-10)">
-                  <Input
-                    type="number"
-                    value={treatmentForm.painScore}
-                    onChange={(v) => setTreatmentForm({ ...treatmentForm, painScore: v })}
-                  />
-                </Field>
-              </div>
-
-              <Field label="Therapist Clinical / SOAP Notes">
-                <Textarea
-                  rows={2}
-                  value={treatmentForm.soapNotes}
-                  onChange={(v) => setTreatmentForm({ ...treatmentForm, soapNotes: v })}
-                  placeholder="Subjective, Objective, Assessment & Plan notes..."
-                />
-              </Field>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="Session Fee ($)">
-                  <Input
-                    type="number"
-                    value={treatmentForm.fee}
-                    onChange={(v) => setTreatmentForm({ ...treatmentForm, fee: v })}
-                  />
-                </Field>
-                <Field label="Billing / Coverage">
-                  <Select
-                    value={treatmentForm.paymentStatus}
-                    onChange={(v) =>
-                      setTreatmentForm({
-                        ...treatmentForm,
-                        paymentStatus: v as PhysioTreatmentSession["paymentStatus"],
-                      })
-                    }
-                    options={[
-                      { label: "Academy Covered (Included)", value: "Academy Covered" },
-                      { label: "Paid (Post to Ledger)", value: "Paid" },
-                      { label: "Charge to Player Account", value: "Charged to Account" },
-                    ]}
-                  />
-                </Field>
-              </div>
-
-              <div className="flex justify-end">
-                <Button onClick={() => void handleAddTreatmentSession()}>
-                  Save Treatment Session
-                </Button>
-              </div>
-            </div>
-
-            <div className="space-y-2 max-h-[260px] overflow-y-auto">
-              {(activePhysioRecord.treatmentSessions || []).length === 0 ? (
-                <div className="py-6 text-center font-mono text-xs text-ink-400">
-                  No treatment sessions logged yet.
-                </div>
-              ) : (
-                (activePhysioRecord.treatmentSessions || []).map((s) => (
-                  <div
-                    key={s.id}
-                    className="rounded-lg border border-ink-800 bg-ink-900 p-3 space-y-1"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono text-xs font-bold text-rose-300">
-                        {s.date} · {s.modality}
-                      </span>
-                      <span className="font-mono text-[10px] text-ink-300">
-                        Pain: {s.painScore}/10 · {s.paymentStatus}
-                      </span>
-                    </div>
-                    <div className="text-xs text-ink-200">{s.soapNotes}</div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        )}
-      </Modal>
-
-      {/* =================================================================== */}
-      {/* MODAL 6: ADD POS CATALOG PRODUCT                                    */}
-      {/* =================================================================== */}
-      <Modal
-        open={posCatalogModalOpen}
-        title="Add Kiosk POS Product"
-        meta="Add drinks, snacks, walk-in passes, or recovery items to the Vescio Nexus Kiosk POS grid"
-        onClose={() => setPosCatalogModalOpen(false)}
-      >
-        <div className="p-4 space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Product Name">
-              <Input
-                value={newCatalogItem.name}
-                onChange={(v) => setNewCatalogItem({ ...newCatalogItem, name: v })}
-                placeholder="e.g. Electrolyte Recovery Drink (500ml)"
-              />
-            </Field>
-            <Field label="Branch Scope">
-              <Select
-                value={newCatalogItem.branch}
-                onChange={(v) => setNewCatalogItem({ ...newCatalogItem, branch: v })}
-                options={[
-                  { label: "All Branches (Shared)", value: "All" },
-                  ...branches.map((b) => ({ label: b.name, value: b.name })),
-                ]}
-              />
-            </Field>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="Category">
-              <Select
-                value={newCatalogItem.category}
-                onChange={(v) =>
-                  setNewCatalogItem({ ...newCatalogItem, category: v as PosItemCategory })
-                }
-                options={[
-                  { label: "Hydration & Drinks", value: "Hydration & Drinks" },
-                  { label: "Snacks & Nutrition", value: "Snacks & Nutrition" },
-                  { label: "Uniforms & Merch", value: "Uniforms & Merch" },
-                  { label: "Court Walk-In & Passes", value: "Court Walk-In & Passes" },
-                  { label: "Recovery & Tape", value: "Recovery & Tape" },
-                ]}
-              />
-            </Field>
-            <Field label="Unit Price ($)">
-              <Input
-                type="number"
-                value={newCatalogItem.price}
-                onChange={(v) => setNewCatalogItem({ ...newCatalogItem, price: v })}
-              />
-            </Field>
-            <Field label="Initial Stock">
-              <Input
-                type="number"
-                value={newCatalogItem.stock}
-                onChange={(v) => setNewCatalogItem({ ...newCatalogItem, stock: v })}
-              />
-            </Field>
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setPosCatalogModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={() => void handleAddPosCatalogItem()}>Save POS Product</Button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* =================================================================== */}
-      {/* MODAL 7: POS RECEIPT VIEWER                                         */}
-      {/* =================================================================== */}
-      <Modal
-        open={Boolean(posReceiptModalTx)}
-        title={
-          posReceiptModalTx ? `POS Receipt · ${posReceiptModalTx.receiptNumber}` : "POS Receipt"
-        }
-        meta="Official Vescio Nexus Kiosk Point-of-Sale Transaction Receipt"
-        onClose={() => setPosReceiptModalTx(null)}
-      >
-        {posReceiptModalTx && (
-          <div className="p-4 space-y-4 font-mono text-xs">
-            <div className="rounded-lg border border-ink-800 bg-ink-950 p-4 space-y-3">
-              <div className="flex items-center justify-between border-b border-ink-800 pb-2">
-                <div>
-                  <div className="font-bold text-ink-100">
-                    {db.academy?.name || "Vescio Vector"} · Vescio Nexus Kiosk POS
-                  </div>
-                  <div className="text-[10px] text-ink-400">
-                    Branch: {posReceiptModalTx.branch} · Cashier: {posReceiptModalTx.cashierName}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="font-bold text-amber-300">{posReceiptModalTx.receiptNumber}</div>
-                  <div className="text-[10px] text-ink-400">
-                    {posReceiptModalTx.date} {posReceiptModalTx.time}
-                  </div>
-                </div>
-              </div>
-
-              <div className="text-[11px] text-ink-300">
-                Customer:{" "}
-                <span className="text-ink-100 font-semibold">{posReceiptModalTx.customerName}</span>{" "}
-                ({posReceiptModalTx.customerType}) · Payment:{" "}
-                <span className="text-emerald-400 font-semibold">
-                  {posReceiptModalTx.paymentMethod}
-                </span>
-              </div>
-
-              <div className="space-y-1 border-t border-b border-ink-800 py-2">
-                {posReceiptModalTx.items.map((item) => (
-                  <div key={item.itemId} className="flex justify-between">
-                    <span>
-                      {item.quantity}x {item.name}
-                    </span>
-                    <span>{money(item.subtotal)}</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="space-y-1">
-                <div className="flex justify-between text-ink-400">
-                  <span>Subtotal</span>
-                  <span>{money(posReceiptModalTx.subtotal)}</span>
-                </div>
-                {posReceiptModalTx.discount > 0 && (
-                  <div className="flex justify-between text-amber-400">
-                    <span>Discount</span>
-                    <span>-{money(posReceiptModalTx.discount)}</span>
-                  </div>
-                )}
-                <div className="flex justify-between text-sm font-bold text-emerald-400 pt-1">
-                  <span>Total</span>
-                  <span>{money(posReceiptModalTx.total)}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2">
-              <Button onClick={() => setPosReceiptModalTx(null)}>Done</Button>
-            </div>
-          </div>
-        )}
       </Modal>
     </div>
   );

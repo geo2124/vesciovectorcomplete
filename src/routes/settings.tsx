@@ -3109,13 +3109,17 @@ function Gateways() {
 
   const [saved, setSaved] = useState(false);
 
-  // SEC-03: Load secrets securely from /private/secrets (isolated from world-readable academy doc)
+  // SEC-03: Load secrets securely from /settings/secrets (isolated from tenant root doc)
   useEffect(() => {
     let isMounted = true;
     async function loadPrivateSecrets() {
       try {
-        const secRef = doc(firestore, "tenants", tenantId, "private", "secrets");
-        const snap = await getDoc(secRef);
+        const secRef = doc(firestore, "tenants", tenantId, "settings", "secrets");
+        let snap = await getDoc(secRef);
+        if (!snap.exists()) {
+          const legacyRef = doc(firestore, "tenants", tenantId, "private", "secrets");
+          snap = await getDoc(legacyRef);
+        }
         if (snap.exists() && isMounted) {
           const sec = snap.data();
           setNotifConfig((prev) => ({
@@ -3124,7 +3128,7 @@ function Gateways() {
             emailApiKey: (sec.emailApiKey as string) ?? prev.emailApiKey ?? "",
           }));
         }
-      } catch (err) {
+      } catch {
         // Not Super Admin or Academy Manager; access restricted as designed
       }
     }
@@ -3149,9 +3153,9 @@ function Gateways() {
   }, [academy.notificationServices]);
 
   async function save() {
-    // 1. SEC-03: Isolate sensitive API keys in /private/secrets
+    // 1. SEC-03: Isolate sensitive API keys in /tenants/{tenantId}/settings/secrets
     try {
-      const secRef = doc(firestore, "tenants", tenantId, "private", "secrets");
+      const secRef = doc(firestore, "tenants", tenantId, "settings", "secrets");
       await setDoc(
         secRef,
         cleanFirestoreData({
@@ -3162,7 +3166,7 @@ function Gateways() {
         { merge: true },
       );
     } catch (err) {
-      console.warn("Could not save to private/secrets (permissions):", err);
+      console.warn("Could not save to settings/secrets (permissions):", err);
     }
 
     // 2. SEC-03 & FIN-03: Strip secrets from public academy root document and enforce offline payment mode

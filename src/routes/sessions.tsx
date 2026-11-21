@@ -471,26 +471,33 @@ function SessionsPage() {
     const savedSession = generatedSessions[0]!;
 
     if (savedSession.status !== "Cancelled" && savedSession.date && savedSession.time) {
-      const conflictResult = checkCourtScheduleConflict(
-        savedSession,
-        db.sessions || [],
-        editing ? targetId : undefined,
-      );
-      if (conflictResult.hasCourtConflict) {
-        toast.error(
-          conflictResult.courtConflictReason ||
-            "Court schedule conflict detected. Full Court bookings cannot overlap with HCA/HCB or another Full Court session.",
+      for (const candidateSess of generatedSessions) {
+        const conflictResult = checkCourtScheduleConflict(
+          candidateSess,
+          db.sessions || [],
+          editing ? targetId : undefined,
+          db.courtReservations || [],
+          undefined,
+          db.branches || [],
         );
-        return;
-      }
-      if (conflictResult.simultaneousHalfCourtSession) {
-        const other = conflictResult.simultaneousHalfCourtSession;
-        toast.info(
-          `Simultaneous Half-Court booking confirmed: ${savedSession.courtAllocation} shares ${savedSession.court || savedSession.detail} with "${other.title}" (${other.courtAllocation || "Half Court"}).`,
-        );
-      }
-      if (conflictResult.hasCoachConflict && conflictResult.coachConflictReason) {
-        toast.warning(conflictResult.coachConflictReason);
+        if (conflictResult.hasCourtConflict) {
+          toast.error(
+            conflictResult.courtConflictReason ||
+              "Court schedule conflict detected. Full Court bookings cannot overlap with HCA/HCB or another Full Court session.",
+          );
+          return;
+        }
+        if (candidateSess.id === savedSession.id) {
+          if (conflictResult.simultaneousHalfCourtSession) {
+            const other = conflictResult.simultaneousHalfCourtSession;
+            toast.info(
+              `Simultaneous Half-Court booking confirmed: ${savedSession.courtAllocation} shares ${savedSession.court || savedSession.detail} with "${other.title}" (${other.courtAllocation || "Half Court"}).`,
+            );
+          }
+          if (conflictResult.hasCoachConflict && conflictResult.coachConflictReason) {
+            toast.warning(conflictResult.coachConflictReason);
+          }
+        }
       }
     }
 
@@ -1852,6 +1859,9 @@ function SessionsPage() {
               },
               db.sessions || [],
               editing?.id,
+              db.courtReservations || [],
+              undefined,
+              rawBranches,
             );
             return (
               <div className="sm:col-span-2 rounded-lg bg-ink-950/80 p-3.5 ring-1 ring-ink-800 space-y-2.5">

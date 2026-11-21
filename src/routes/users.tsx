@@ -75,7 +75,7 @@ function createBlankPermissions(): Record<string, PermissionPower> {
   return perms;
 }
 
-export function UsersPage() {
+function UsersPage() {
   const { db, update, ready, tenantId } = useDB();
   const currentUser = useTenantUser();
   const { user, passwordUser, loading: authLoading } = useAuth();

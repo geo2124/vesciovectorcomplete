@@ -26,6 +26,7 @@ import {
   getDocs,
   query,
   where,
+  limit,
   writeBatch,
   setDoc,
   deleteDoc,
@@ -56,12 +57,21 @@ import {
   dismissAcademyNotification,
   cleanIncomingFirestoreData,
   cleanFirestoreData,
+  MAX_BRANCH_LOG_ENTRIES,
+  capBranchSubArrays,
+  atomicRunBranchTransaction,
+  atomicBookCourtReservationTransaction,
+  atomicBookPhysioAppointmentTransaction,
+  atomicCompletePosSaleTransaction,
+  atomicGymCheckInTransaction,
+  atomicBatchSaveEntities,
 } from "./firestore-sync";
 import {
   useAuth,
   bootstrapFirestoreUserDocument,
   normalizeUiRole,
   isSuperAdminRoleOrEmail,
+  isTenantAdminRoleOrEmail,
 } from "./auth";
 import { getTenantSlug } from "./utils";
 import { toast } from "sonner";
@@ -140,6 +150,8 @@ export {
   DEFAULT_PRINTING_OPTIONS,
   DEFAULT_CRM_SETTINGS,
   DEFAULT_POS_CATALOG,
+  DEFAULT_GYM_PACKAGES,
+  DEFAULT_PHYSIO_PACKAGES,
   MASTER_OWNER_EMAIL,
   DEFAULT_PROTECTED_SUPER_ADMIN_EMAILS,
   isMasterOwner,
@@ -157,13 +169,29 @@ export type {
   CourtReservation,
   GymMember,
   GymWorkoutLog,
+  GymProgressMetricEntry,
+  GymCheckInEntry,
+  GymPackageCategory,
+  GymPackageConfig,
+  GymCoachProfile,
+  GymScheduleSlotType,
+  GymScheduleSlot,
   PhysioRecord,
   PhysioTreatmentSession,
+  PhysioExercisePrescription,
+  PhysioAppointmentStatus,
+  PhysioPractitioner,
+  PhysioRoom,
+  PhysioPackageConfig,
+  PhysioAppointment,
   PlayerMedicalClearanceStatus,
   PosCartLineItem,
   PosCatalogItem,
   PosItemCategory,
   PosTransaction,
+  PosInventoryLog,
+  PosRegisterShift,
+  PosHeldOrder,
   MasterDrill,
   DrillCategory,
   MerchVariant,
@@ -550,6 +578,7 @@ export type Academy = {
     provider: "Stripe" | "Tap" | "Fawry" | "None";
     publishableKey?: string;
     secretKey?: string;
+    webhookSecret?: string;
     mode: "Test" | "Live";
     enabled: boolean;
   };
@@ -1172,9 +1201,10 @@ export function evaluateTeamEligibilityForDob(
   dob: string | undefined,
   team: Partial<Team> | null | undefined,
   rules?: Record<string, { startDate: string; endDate: string }>,
+  playerGender?: "Male" | "Female" | string,
 ): {
   eligible: boolean;
-  matchType: "exact" | "younger" | "older" | "ineligible";
+  matchType: "exact" | "younger" | "older" | "ineligible" | "ineligible_gender";
   badgeLabel: TeamEligibilityBadgeLabel;
   rule?: { startDate: string; endDate: string };
   formattedRange?: string;
@@ -1201,6 +1231,22 @@ export function evaluateTeamEligibilityForDob(
   const startYr = rule.startDate.slice(0, 4);
   const endYr = rule.endDate.slice(0, 4);
   const birthYearRange = startYr === endYr ? startYr : `${startYr}–${endYr}`;
+
+  if (playerGender && team.gender) {
+    const tGender = team.gender.trim().toLowerCase();
+    const pGender = playerGender.trim().toLowerCase();
+    const isMixed = tGender === "mixed" || tGender === "co-ed" || tGender === "coed";
+    if (!isMixed && tGender !== pGender) {
+      return {
+        eligible: false,
+        matchType: "ineligible_gender",
+        badgeLabel: "Ineligible",
+        rule,
+        formattedRange,
+        birthYearRange,
+      };
+    }
+  }
 
   if (cleanDob >= rule.startDate && cleanDob <= rule.endDate) {
     return {
@@ -1504,11 +1550,104 @@ export function calculateSessionTotalCostSummary(
   };
 }
 
+export function projectCourtReservationsForDate(
+  targetDate: string,
+  reservationsList: CourtReservation[],
+  options?: {
+    branchFilter?: string;
+    branches?: Branch[];
+    excludeReservationId?: string;
+  },
+): Array<CourtReservation & { isProjectedContinuous?: boolean; seedReservationId?: string }> {
+  const cleanDate = (targetDate || "").trim();
+  if (!cleanDate) return [];
+
+  const getWeekdayUtc = (iso: string): number | null => {
+    const parts = iso.split("-").map(Number);
+    if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
+    return new Date(Date.UTC(parts[0]!, parts[1]! - 1, parts[2]!)).getUTCDay();
+  };
+
+  const targetWeekday = getWeekdayUtc(cleanDate);
+  const bFilter = options?.branchFilter?.trim();
+  const matchesBranch = (branchName?: string) => {
+    if (!bFilter || bFilter === "All") return true;
+    return (branchName || "").trim().toLowerCase() === bFilter.toLowerCase();
+  };
+
+  const branchesList: Branch[] = Array.isArray(options?.branches)
+    ? options.branches
+    : typeof dbStore !== "undefined"
+      ? (dbStore.getSlice("branches") as Branch[]) || []
+      : [];
+
+  const isOffDayForBranch = (branchName?: string): boolean => {
+    const bLower = (branchName || "").trim().toLowerCase();
+    const bObj = bLower
+      ? branchesList.find((b) => (b.name || "").trim().toLowerCase() === bLower)
+      : branchesList[0];
+    return Boolean(bObj?.offDays?.some((od) => od.date === cleanDate));
+  };
+
+  const concreteForDate = (reservationsList || []).filter(
+    (r) =>
+      r &&
+      r.id !== options?.excludeReservationId &&
+      r.status !== "Cancelled" &&
+      (r.date || "").trim() === cleanDate &&
+      matchesBranch(r.branch),
+  );
+
+  const materializedGroupKeys = new Set<string>();
+  for (const r of concreteForDate) {
+    if (r.recurringGroupId) {
+      materializedGroupKeys.add(`${r.recurringGroupId}::${cleanDate}`);
+    }
+  }
+
+  const projectedContinuousForDate: Array<
+    CourtReservation & { isProjectedContinuous?: boolean; seedReservationId?: string }
+  > = [];
+
+  for (const seed of reservationsList || []) {
+    if (!seed || seed.id === options?.excludeReservationId || seed.status === "Cancelled") continue;
+    if (seed.recurrenceMode !== "continuous") continue;
+    if (!matchesBranch(seed.branch)) continue;
+    if (isOffDayForBranch(seed.branch)) continue;
+
+    const startIso = (seed.seriesStartDate || seed.date || "").trim();
+    if (!startIso || cleanDate <= startIso) continue;
+    if (seed.continuousActive === false && !seed.continuousStoppedAfterDate) continue;
+    if (seed.continuousStoppedAfterDate && cleanDate > seed.continuousStoppedAfterDate) continue;
+    if (Array.isArray(seed.skippedDates) && seed.skippedDates.includes(cleanDate)) continue;
+    if (targetWeekday === null || getWeekdayUtc(startIso) !== targetWeekday) continue;
+
+    const grpId = seed.recurringGroupId || seed.id;
+    if (materializedGroupKeys.has(`${grpId}::${cleanDate}`)) continue;
+
+    projectedContinuousForDate.push({
+      ...seed,
+      id: `${seed.id}__occ__${cleanDate}`,
+      seedReservationId: seed.id,
+      isProjectedContinuous: true,
+      date: cleanDate,
+      paidAmount: 0,
+      paymentStatus: seed.freePass ? "Free Pass" : "Pending",
+      status: "Confirmed",
+    });
+  }
+
+  return [...concreteForDate, ...projectedContinuousForDate].sort((a, b) =>
+    (a.startTime || "").localeCompare(b.startTime || ""),
+  );
+}
+
 /**
  * Schedule Conflict Checker supporting Full Court and Half-Court (HCA / HCB) simultaneous operations:
  * - Two different teams/coaches can book "Half Court - HCA" and "Half Court - HCB" at the exact same time on the same court.
  * - Blocks "Full Court" bookings if either HCA, HCB, or Full Court is already booked on that court during the overlapping time slot.
  * - Blocks duplicate "Half Court - HCA" + "Half Court - HCA" or "Half Court - HCB" + "Half Court - HCB" bookings on the same court/time.
+ * - Blocks scheduling on dates marked in the branch's `offDays` array.
  */
 export function checkCourtScheduleConflict(
   candidate: Partial<SessionItem>,
@@ -1516,6 +1655,7 @@ export function checkCourtScheduleConflict(
   excludeSessionId?: string,
   existingReservations?: CourtReservation[],
   excludeReservationId?: string,
+  branchOffDaysOrBranches?: BranchOffDay[] | Branch[],
 ): {
   hasCourtConflict: boolean;
   hasCoachConflict: boolean;
@@ -1548,6 +1688,36 @@ export function checkCourtScheduleConflict(
       : "Full Court";
   const candidateCoach = (candidate.headCoach || candidate.coach || "").trim().toLowerCase();
 
+  // Check Branch Off Days / Closures first
+  let resolvedOffDays: BranchOffDay[] = [];
+  if (Array.isArray(branchOffDaysOrBranches) && branchOffDaysOrBranches.length > 0) {
+    const firstItem = branchOffDaysOrBranches[0] as BranchOffDay | Branch;
+    if (firstItem && "date" in firstItem && "reason" in firstItem) {
+      resolvedOffDays = branchOffDaysOrBranches as BranchOffDay[];
+    } else {
+      const branchesArr = branchOffDaysOrBranches as Branch[];
+      const matchedBranch = candidateBranch
+        ? branchesArr.find((b) => (b.name || "").trim().toLowerCase() === candidateBranch)
+        : branchesArr[0];
+      resolvedOffDays = matchedBranch?.offDays || [];
+    }
+  } else if (typeof dbStore !== "undefined") {
+    const storeBranches = (dbStore.getSlice("branches") as Branch[]) || [];
+    const matchedBranch = candidateBranch
+      ? storeBranches.find((b) => (b.name || "").trim().toLowerCase() === candidateBranch)
+      : storeBranches[0];
+    resolvedOffDays = matchedBranch?.offDays || [];
+  }
+
+  const offDayMatch = resolvedOffDays.find((od) => od && od.date === candidateDate);
+  if (offDayMatch) {
+    return {
+      hasCourtConflict: true,
+      hasCoachConflict: false,
+      courtConflictReason: `Facility Off Day on ${candidateDate}: ${offDayMatch.reason || "Branch Closed"}. Sessions cannot be scheduled on Off Days.`,
+    };
+  }
+
   let conflictingCourtSession: SessionItem | undefined;
   let conflictingCoachSession: SessionItem | undefined;
   let simultaneousHalfCourtSession: SessionItem | undefined;
@@ -1560,58 +1730,13 @@ export function checkCourtScheduleConflict(
       ? (dbStore.getSlice("courtReservations") as CourtReservation[]) || []
       : [];
 
-  const getWeekdayUtc = (iso: string): number | null => {
-    const parts = iso.split("-").map(Number);
-    if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
-    return new Date(Date.UTC(parts[0]!, parts[1]! - 1, parts[2]!)).getUTCDay();
-  };
-
-  const candidateWeekday = getWeekdayUtc(candidateDate);
-
-  const concreteForDate = reservationsList.filter(
-    (r) =>
-      r &&
-      r.id !== excludeReservationId &&
-      r.status !== "Cancelled" &&
-      (r.date || "").trim() === candidateDate,
+  const activeReservationsForDate = projectCourtReservationsForDate(
+    candidateDate,
+    reservationsList,
+    { excludeReservationId },
   );
 
-  // Also include active Continuous recurring series matching candidateDate weekday if not already materialized or skipped
-  const projectedContinuousForDate: CourtReservation[] = reservationsList
-    .filter((r) => {
-      if (!r || r.id === excludeReservationId || r.status === "Cancelled") return false;
-      if (r.recurrenceMode !== "continuous" || r.continuousActive === false) return false;
-      const startIso = (r.seriesStartDate || r.date || "").trim();
-      if (!startIso || candidateDate <= startIso) return false;
-      if (r.continuousStoppedAfterDate && candidateDate > r.continuousStoppedAfterDate) {
-        return false;
-      }
-      if (Array.isArray(r.skippedDates) && r.skippedDates.includes(candidateDate)) {
-        return false;
-      }
-      if (candidateWeekday === null || getWeekdayUtc(startIso) !== candidateWeekday) {
-        return false;
-      }
-      const alreadyMaterialized = reservationsList.some(
-        (m) =>
-          m &&
-          m.id !== r.id &&
-          m.recurringGroupId &&
-          m.recurringGroupId === r.recurringGroupId &&
-          (m.date || "").trim() === candidateDate,
-      );
-      return !alreadyMaterialized;
-    })
-    .map((r) => ({
-      ...r,
-      id: `${r.id}__occ__${candidateDate}`,
-      date: candidateDate,
-    }));
-
-  const reservationVirtualSessions: SessionItem[] = [
-    ...concreteForDate,
-    ...projectedContinuousForDate,
-  ].map((r) => ({
+  const reservationVirtualSessions: SessionItem[] = activeReservationsForDate.map((r) => ({
     id: r.id,
     kind: "Reservation",
     title: `[Vescio Nexus Rental] ${r.clientName}`,
@@ -2390,6 +2515,14 @@ export type Ctx = {
     id: string,
     partial: Partial<DB[K][number]>,
   ) => Promise<void>;
+  runBranchArrayTransaction: (
+    branchId: string,
+    updaterFn: (currentBranch: Branch) => Branch,
+    fallbackBranch?: Branch,
+  ) => Promise<Branch>;
+  cascadeBranchAndCourtRename: (
+    params: BranchAndCourtRenameParams,
+  ) => Promise<{ updatedRecordsCount: number; branchRecord: Branch }>;
   recordAttendance: (
     sessionId: string,
     playerId: string,
@@ -2437,14 +2570,652 @@ export type Ctx = {
   resetWorkspaceData: () => Promise<void>;
 };
 
-export { getTenantSlug };
+export interface BranchAndCourtRenameParams {
+  branchId: string;
+  updatedBranch: Branch;
+  oldBranchName?: string;
+  newBranchName: string;
+  /** Map of oldCourtName -> newCourtName for renamed courts within this branch */
+  courtRenames?: Record<string, string>;
+  /** List of court names that were removed from this branch */
+  removedCourtNames?: string[];
+  /** Fallback court name on the branch (e.g., primary court) when a court is removed */
+  fallbackCourtName?: string;
+}
+
+/**
+ * Pure deterministic transformer that cascades a Branch rename and/or Court renames/removals
+ * across all referencing collections and embedded branch sub-arrays, returning both the updated
+ * DB snapshot and the exact Firestore batch operations needed to persist the cascade.
+ */
+export function applyBranchAndCourtRenameToDB(
+  currentDb: DB,
+  params: BranchAndCourtRenameParams,
+): {
+  nextDb: DB;
+  updatedBranchRecord: Branch;
+  batchOps: Array<{
+    collectionName: string;
+    id: string;
+    data: Record<string, unknown>;
+    merge?: boolean;
+  }>;
+} {
+  const oldB = (params.oldBranchName || "").trim();
+  const newB = (params.newBranchName || params.updatedBranch.name || "").trim();
+  const branchRenamed = Boolean(oldB && newB && oldB.toLowerCase() !== newB.toLowerCase());
+
+  const courtRenameEntries = Object.entries(params.courtRenames || {}).filter(([oldC, newC]) =>
+    Boolean(oldC.trim() && newC.trim() && oldC.trim().toLowerCase() !== newC.trim().toLowerCase()),
+  );
+  const removedCourtsSet = new Set(
+    (params.removedCourtNames || []).map((c) => c.trim().toLowerCase()).filter(Boolean),
+  );
+  const fallbackCourt = (
+    params.fallbackCourtName ||
+    params.updatedBranch.courts?.[0]?.name ||
+    ""
+  ).trim();
+
+  const matchesOldBranch = (val?: string): boolean =>
+    branchRenamed && Boolean(val && val.trim().toLowerCase() === oldB.toLowerCase());
+
+  const matchesTargetBranch = (val?: string): boolean => {
+    if (!val) return false;
+    const lower = val.trim().toLowerCase();
+    return (
+      (Boolean(oldB) && lower === oldB.toLowerCase()) ||
+      (Boolean(newB) && lower === newB.toLowerCase())
+    );
+  };
+
+  const resolveNextCourtName = (courtVal?: string, recordBranch?: string): string | undefined => {
+    if (!courtVal || !matchesTargetBranch(recordBranch)) return courtVal;
+    const trimmed = courtVal.trim();
+    const lower = trimmed.toLowerCase();
+    for (const [oldC, newC] of courtRenameEntries) {
+      if (lower === oldC.trim().toLowerCase()) {
+        return newC.trim();
+      }
+    }
+    if (removedCourtsSet.has(lower) && fallbackCourt) {
+      return fallbackCourt;
+    }
+    return courtVal;
+  };
+
+  // 1. Update embedded branch sub-arrays on updatedBranch
+  let branchRec: Branch = {
+    ...params.updatedBranch,
+    name: newB || params.updatedBranch.name,
+  };
+  if (branchRenamed) {
+    if (Array.isArray(branchRec.gymBookings)) {
+      branchRec = {
+        ...branchRec,
+        gymBookings: branchRec.gymBookings.map((b) =>
+          matchesOldBranch(b.branch) ? { ...b, branch: newB } : b,
+        ),
+      };
+    }
+    if (Array.isArray(branchRec.physioAppointments)) {
+      branchRec = {
+        ...branchRec,
+        physioAppointments: branchRec.physioAppointments.map((a) =>
+          matchesOldBranch(a.branch) ? { ...a, branch: newB } : a,
+        ),
+      };
+    }
+    if (Array.isArray(branchRec.posShifts)) {
+      branchRec = {
+        ...branchRec,
+        posShifts: branchRec.posShifts.map((s) =>
+          matchesOldBranch(s.branch) ? { ...s, branch: newB } : s,
+        ),
+      };
+    }
+    if (Array.isArray(branchRec.posInventoryLogs)) {
+      branchRec = {
+        ...branchRec,
+        posInventoryLogs: branchRec.posInventoryLogs.map((l) =>
+          matchesOldBranch(l.branch) ? { ...l, branch: newB } : l,
+        ),
+      };
+    }
+    if (Array.isArray(branchRec.posHeldOrders)) {
+      branchRec = {
+        ...branchRec,
+        posHeldOrders: branchRec.posHeldOrders.map((h) =>
+          matchesOldBranch(h.branch) ? { ...h, branch: newB } : h,
+        ),
+      };
+    }
+  }
+  branchRec = capBranchSubArrays(
+    branchRec as unknown as Record<string, unknown>,
+  ) as unknown as Branch;
+
+  const batchOps: Array<{
+    collectionName: string;
+    id: string;
+    data: Record<string, unknown>;
+    merge?: boolean;
+  }> = [
+    {
+      collectionName: "branches",
+      id: branchRec.id,
+      data: branchRec as unknown as Record<string, unknown>,
+      merge: true,
+    },
+  ];
+
+  const existingBranches = currentDb.branches || [];
+  const hasBranch = existingBranches.some((b) => b.id === branchRec.id);
+  const nextBranches = hasBranch
+    ? existingBranches.map((b) => (b.id === branchRec.id ? branchRec : b))
+    : [branchRec, ...existingBranches];
+
+  // Helper for simple branch-field collections
+  const cascadeSimpleBranchSlice = <T extends { id: string; branch?: string }>(
+    collectionName: string,
+    items: T[] | undefined,
+  ): T[] => {
+    const list = items || [];
+    if (!branchRenamed) return list;
+    return list.map((item) => {
+      if (matchesOldBranch(item.branch)) {
+        const updated = { ...item, branch: newB };
+        batchOps.push({
+          collectionName,
+          id: item.id,
+          data: { id: item.id, branch: newB },
+          merge: true,
+        });
+        return updated;
+      }
+      return item;
+    });
+  };
+
+  const nextPlayers = cascadeSimpleBranchSlice("players", currentDb.players);
+  const nextTeams = cascadeSimpleBranchSlice("teams", currentDb.teams);
+  const nextPhysioRecords = cascadeSimpleBranchSlice("physioRecords", currentDb.physioRecords);
+  const nextPosCatalog = cascadeSimpleBranchSlice("posCatalog", currentDb.posCatalog);
+  const nextPosTransactions = cascadeSimpleBranchSlice(
+    "posTransactions",
+    currentDb.posTransactions,
+  );
+  const nextLedger = cascadeSimpleBranchSlice("ledger", currentDb.ledger);
+  const nextStock = cascadeSimpleBranchSlice("stock", currentDb.stock);
+  const nextOrders = cascadeSimpleBranchSlice("orders", currentDb.orders);
+  const nextInvoices = cascadeSimpleBranchSlice("invoices", currentDb.invoices);
+
+  // GymMembers: branch field + checkInHistory[].branch
+  const nextGymMembers = (currentDb.gymMembers || []).map((m) => {
+    if (!branchRenamed) return m;
+    const topMatches = matchesOldBranch(m.branch);
+    const historyMatches =
+      Array.isArray(m.checkInHistory) && m.checkInHistory.some((c) => matchesOldBranch(c.branch));
+    if (!topMatches && !historyMatches) return m;
+    const nextHistory = Array.isArray(m.checkInHistory)
+      ? m.checkInHistory.map((c) => (matchesOldBranch(c.branch) ? { ...c, branch: newB } : c))
+      : m.checkInHistory;
+    const updated: GymMember = {
+      ...m,
+      ...(topMatches ? { branch: newB } : {}),
+      ...(historyMatches ? { checkInHistory: nextHistory } : {}),
+    };
+    batchOps.push({
+      collectionName: "gymMembers",
+      id: m.id,
+      data: {
+        id: m.id,
+        ...(topMatches ? { branch: newB } : {}),
+        ...(historyMatches ? { checkInHistory: nextHistory } : {}),
+      },
+      merge: true,
+    });
+    return updated;
+  });
+
+  // Sessions: branch field + court field
+  const nextSessions = (currentDb.sessions || []).map((s) => {
+    const bChanged = matchesOldBranch(s.branch);
+    const resolvedCourt = resolveNextCourtName(s.court, s.branch);
+    const cChanged = resolvedCourt !== undefined && resolvedCourt !== s.court;
+    if (!bChanged && !cChanged) return s;
+    const updated: SessionItem = {
+      ...s,
+      ...(bChanged ? { branch: newB } : {}),
+      ...(cChanged && resolvedCourt ? { court: resolvedCourt } : {}),
+    };
+    batchOps.push({
+      collectionName: "sessions",
+      id: s.id,
+      data: {
+        id: s.id,
+        ...(bChanged ? { branch: newB } : {}),
+        ...(cChanged && resolvedCourt ? { court: resolvedCourt } : {}),
+      },
+      merge: true,
+    });
+    return updated;
+  });
+
+  // CourtReservations (including recurring templates & continuous seeds): branch field + court field
+  const nextCourtReservations = (currentDb.courtReservations || []).map((r) => {
+    const bChanged = matchesOldBranch(r.branch);
+    const resolvedCourt = resolveNextCourtName(r.court, r.branch);
+    const cChanged = resolvedCourt !== undefined && resolvedCourt !== r.court;
+    if (!bChanged && !cChanged) return r;
+    const updated: CourtReservation = {
+      ...r,
+      ...(bChanged ? { branch: newB } : {}),
+      ...(cChanged && resolvedCourt ? { court: resolvedCourt } : {}),
+    };
+    batchOps.push({
+      collectionName: "courtReservations",
+      id: r.id,
+      data: {
+        id: r.id,
+        ...(bChanged ? { branch: newB } : {}),
+        ...(cChanged && resolvedCourt ? { court: resolvedCourt } : {}),
+      },
+      merge: true,
+    });
+    return updated;
+  });
+
+  // Staff & Coaches: branch + branches[]
+  const cascadeMultiBranchSlice = <T extends { id: string; branch?: string; branches?: string[] }>(
+    collectionName: string,
+    items: T[] | undefined,
+  ): T[] => {
+    const list = items || [];
+    if (!branchRenamed) return list;
+    return list.map((item) => {
+      const primaryMatches = matchesOldBranch(item.branch);
+      const arrayMatches =
+        Array.isArray(item.branches) && item.branches.some((b) => matchesOldBranch(b));
+      if (!primaryMatches && !arrayMatches) return item;
+      const nextBranchesArr = Array.isArray(item.branches)
+        ? item.branches.map((b) => (matchesOldBranch(b) ? newB : b))
+        : item.branches;
+      const updated: T = {
+        ...item,
+        ...(primaryMatches ? { branch: newB } : {}),
+        ...(arrayMatches ? { branches: nextBranchesArr } : {}),
+      };
+      batchOps.push({
+        collectionName,
+        id: item.id,
+        data: {
+          id: item.id,
+          ...(primaryMatches ? { branch: newB } : {}),
+          ...(arrayMatches ? { branches: nextBranchesArr } : {}),
+        },
+        merge: true,
+      });
+      return updated;
+    });
+  };
+
+  const nextStaff = cascadeMultiBranchSlice("staff", currentDb.staff);
+  const nextCoaches = cascadeMultiBranchSlice("coaches", currentDb.coaches);
+
+  const nextDb: DB = {
+    ...currentDb,
+    branches: nextBranches,
+    players: nextPlayers,
+    teams: nextTeams,
+    sessions: nextSessions,
+    courtReservations: nextCourtReservations,
+    gymMembers: nextGymMembers,
+    physioRecords: nextPhysioRecords,
+    posCatalog: nextPosCatalog,
+    posTransactions: nextPosTransactions,
+    ledger: nextLedger,
+    staff: nextStaff,
+    coaches: nextCoaches,
+    stock: nextStock,
+    orders: nextOrders,
+    invoices: nextInvoices,
+  };
+
+  return {
+    nextDb,
+    updatedBranchRecord: branchRec,
+    batchOps,
+  };
+}
+
+/**
+ * Pure deterministic evaluator for monthly cycle renewal Idle state initialization.
+ * Every eligible active player starts the new monthly cycle in `Idle` with `idleSinceDate`
+ * and `missedSessionsSinceIdle = 0` unless they have already paid or attended in the target month.
+ */
+export function evaluateMonthlyIdleCycleRenewal(params: {
+  players: Player[];
+  sessions: SessionItem[];
+  attendance: Record<string, Record<string, string>>;
+  invoices: Invoice[];
+  targetYm: string;
+  renewalDate: string;
+}): {
+  updatedPlayers: Player[];
+  transitionedToIdleIds: string[];
+  keptActiveIds: string[];
+} {
+  const { players, sessions, attendance, invoices, targetYm, renewalDate } = params;
+  const transitionedToIdleIds: string[] = [];
+  const keptActiveIds: string[] = [];
+
+  const updatedPlayers = players.map((p) => {
+    if (p.isScholarship === true || (p.status !== "Active" && p.status !== "Idle")) {
+      return p;
+    }
+
+    const attendedInNewMonth =
+      getPlayerMonthlyPresentCount(p.id, sessions, attendance, targetYm) > 0;
+    const paidInNewMonth =
+      invoices.some((inv) => {
+        if (inv.playerId !== p.id || inv.status !== "paid") return false;
+        const invYm = `${inv.year}-${String(inv.month).padStart(2, "0")}`;
+        return invYm >= targetYm || Boolean(inv.paidDate && inv.paidDate >= `${targetYm}-01`);
+      }) ||
+      (Array.isArray(p.payments) &&
+        p.payments.some((pmt) => pmt.date?.startsWith(targetYm) && pmt.amount > 0));
+
+    if (attendedInNewMonth || paidInNewMonth) {
+      keptActiveIds.push(p.id);
+      return {
+        ...p,
+        status: "Active" as const,
+        idleSinceDate: "",
+        missedSessionsSinceIdle: 0,
+        idleMissedSessionIds: [],
+      };
+    }
+
+    transitionedToIdleIds.push(p.id);
+    return {
+      ...p,
+      status: "Idle" as const,
+      idleSinceDate: p.status === "Idle" && p.idleSinceDate ? p.idleSinceDate : renewalDate,
+      missedSessionsSinceIdle: p.status === "Idle" ? Number(p.missedSessionsSinceIdle) || 0 : 0,
+      idleMissedSessionIds:
+        p.status === "Idle" && Array.isArray(p.idleMissedSessionIds) ? p.idleMissedSessionIds : [],
+    };
+  });
+
+  return {
+    updatedPlayers,
+    transitionedToIdleIds,
+    keptActiveIds,
+  };
+}
+
+/**
+ * Pure deterministic evaluator for completed team session Idle tracking & 3-session alert engine.
+ * - Increments `missedSessionsSinceIdle` on each completed team session while the player is `Idle`
+ *   without payment or attendance (idempotent per session ID via `idleMissedSessionIds`).
+ * - Fires an alert on every 3rd missed session (`missedSessionsSinceIdle % 3 === 0`, i.e. 3, 6, 9...).
+ * - Immediately reactivates the player to `Active` and resets `missedSessionsSinceIdle = 0` and
+ *   `idleSinceDate = ""` on payment or first `Present` attendance of the new cycle.
+ */
+export function evaluateIdleSessionCompletionAndAlerts(params: {
+  completedSession: SessionItem;
+  players: Player[];
+  teams?: Team[];
+  attendance?: Record<string, Record<string, string>>;
+  invoices?: Invoice[];
+}): {
+  updatedPlayers: Player[];
+  updatedPlayerMap: Map<string, Partial<Player>>;
+  alerts: Array<{
+    player: Player;
+    missedCount: number;
+    idleSince: string;
+    message: string;
+  }>;
+  reactivatedPlayerIds: string[];
+} {
+  const { completedSession, players, teams = [], attendance = {}, invoices = [] } = params;
+
+  const updatedPlayerMap = new Map<string, Partial<Player>>();
+  const alerts: Array<{
+    player: Player;
+    missedCount: number;
+    idleSince: string;
+    message: string;
+  }> = [];
+  const reactivatedPlayerIds: string[] = [];
+
+  if (!completedSession || (completedSession.status || "").toLowerCase() !== "completed") {
+    return { updatedPlayers: players, updatedPlayerMap, alerts, reactivatedPlayerIds };
+  }
+
+  const sessionTeams = new Set<string>();
+  const addTeamName = (val?: string | null) => {
+    if (val && val.trim()) sessionTeams.add(val.trim().toLowerCase());
+  };
+  addTeamName(completedSession.team);
+  addTeamName(completedSession.teamA);
+  addTeamName(completedSession.teamB);
+
+  if (sessionTeams.size === 0 && completedSession.title) {
+    const titleLower = completedSession.title.toLowerCase();
+    teams.forEach((t) => {
+      if (t.name && titleLower.includes(t.name.toLowerCase().trim())) {
+        sessionTeams.add(t.name.toLowerCase().trim());
+      }
+    });
+  }
+
+  if (sessionTeams.size === 0) {
+    return { updatedPlayers: players, updatedPlayerMap, alerts, reactivatedPlayerIds };
+  }
+
+  const sessionAttendanceMap = attendance[completedSession.id] || {};
+  const sessionAttendeesSet = new Set(completedSession.attendees || []);
+  const sessionDate = completedSession.date || new Date().toISOString().slice(0, 10);
+  const sessionYm = sessionDate.slice(0, 7);
+
+  for (const p of players) {
+    if (p.status !== "Idle") continue;
+    const playerTeams = p.teams || [];
+    if (!playerTeams.some((t) => sessionTeams.has(t.toLowerCase().trim()))) continue;
+
+    const rawAttStatus = sessionAttendanceMap[p.id];
+    const attendedPresent =
+      (typeof rawAttStatus === "string" && rawAttStatus.toLowerCase() === "present") ||
+      sessionAttendeesSet.has(p.id);
+    const idleSince = p.idleSinceDate || sessionDate;
+
+    const hasPaidForCycle =
+      invoices.some((inv) => {
+        if (inv.playerId !== p.id || inv.status !== "paid") return false;
+        const invYm = `${inv.year}-${String(inv.month).padStart(2, "0")}`;
+        return invYm >= sessionYm || Boolean(inv.paidDate && inv.paidDate >= idleSince);
+      }) ||
+      (Array.isArray(p.payments) &&
+        p.payments.some((pmt) => Boolean(pmt.date && pmt.date >= idleSince) && pmt.amount > 0));
+
+    if (attendedPresent || hasPaidForCycle) {
+      updatedPlayerMap.set(p.id, {
+        status: "Active",
+        missedSessionsSinceIdle: 0,
+        idleSinceDate: "",
+        idleMissedSessionIds: [],
+      });
+      reactivatedPlayerIds.push(p.id);
+      continue;
+    }
+
+    const alreadyCountedIds = Array.isArray(p.idleMissedSessionIds) ? p.idleMissedSessionIds : [];
+    if (alreadyCountedIds.includes(completedSession.id)) {
+      continue;
+    }
+
+    const nextMissed = (Number(p.missedSessionsSinceIdle) || 0) + 1;
+    const nextMissedIds = [...alreadyCountedIds, completedSession.id];
+
+    updatedPlayerMap.set(p.id, {
+      status: "Idle",
+      idleSinceDate: idleSince,
+      missedSessionsSinceIdle: nextMissed,
+      idleMissedSessionIds: nextMissedIds,
+    });
+
+    if (nextMissed > 0 && nextMissed % 3 === 0) {
+      alerts.push({
+        player: p,
+        missedCount: nextMissed,
+        idleSince,
+        message: `${p.name} has missed ${nextMissed} sessions while Idle since ${idleSince} without payment or attendance.`,
+      });
+    }
+  }
+
+  const updatedPlayers = players.map((p) => {
+    const patch = updatedPlayerMap.get(p.id);
+    return patch ? { ...p, ...patch } : p;
+  });
+
+  return {
+    updatedPlayers,
+    updatedPlayerMap,
+    alerts,
+    reactivatedPlayerIds,
+  };
+}
+
+/**
+ * Pure deterministic evaluator for CRM Auto-Churn date calculation.
+ * Evaluates `1_month` (30 days) vs `custom_weeks` (weeks * 7 days) strictly using
+ * session attendance and invoice/payment dates ON OR AFTER `idleSinceDate`.
+ */
+export function evaluateCrmAutoChurnCandidates(params: {
+  players: Player[];
+  crmSettings: CrmSettings;
+  sessions?: SessionItem[];
+  attendance?: Record<string, Record<string, string>>;
+  invoices?: Invoice[];
+  crmLeads?: CrmLead[];
+  referenceDateIso?: string;
+}): {
+  thresholdDays: number;
+  thresholdLabel: string;
+  churnCandidates: Array<{
+    player: Player;
+    daysIdle: number;
+    churnReason: string;
+  }>;
+} {
+  const {
+    players,
+    crmSettings,
+    sessions = [],
+    attendance = {},
+    invoices = [],
+    crmLeads = [],
+    referenceDateIso,
+  } = params;
+
+  const thresholdDays =
+    crmSettings.autoChurnMode === "1_month"
+      ? 30
+      : Math.max(1, Number(crmSettings.autoChurnWeeks) || 4) * 7;
+
+  const thresholdLabel =
+    crmSettings.autoChurnMode === "1_month"
+      ? "1 Month (30 days)"
+      : `${crmSettings.autoChurnWeeks} Weeks (${thresholdDays} days)`;
+
+  if (!crmSettings.autoChurnEnabled) {
+    return { thresholdDays, thresholdLabel, churnCandidates: [] };
+  }
+
+  const nowMs = referenceDateIso ? new Date(referenceDateIso).getTime() : Date.now();
+  const churnCandidates: Array<{
+    player: Player;
+    daysIdle: number;
+    churnReason: string;
+  }> = [];
+
+  for (const p of players) {
+    if (p.status !== "Idle" || !p.idleSinceDate) continue;
+    const idleStartMs = new Date(p.idleSinceDate).getTime();
+    if (Number.isNaN(idleStartMs)) continue;
+
+    const daysIdle = Math.floor((nowMs - idleStartMs) / (1000 * 60 * 60 * 24));
+    if (daysIdle < thresholdDays) continue;
+
+    const attendedSinceIdle = sessions.some((s) => {
+      if (!s || (s.status || "").toLowerCase() === "cancelled") return false;
+      if (!s.date || s.date < p.idleSinceDate!) return false;
+      const mapForSess = attendance[s.id];
+      const recStatus = mapForSess?.[p.id];
+      if (typeof recStatus === "string") {
+        return recStatus.toLowerCase() === "present";
+      }
+      return Array.isArray(s.attendees) && s.attendees.includes(p.id);
+    });
+
+    const paidSinceIdle =
+      invoices.some((inv) => {
+        if (inv.playerId !== p.id || inv.status !== "paid") return false;
+        return Boolean(inv.paidDate && inv.paidDate >= p.idleSinceDate!);
+      }) ||
+      (Array.isArray(p.payments) &&
+        p.payments.some(
+          (pmt) => Boolean(pmt.date && pmt.date >= p.idleSinceDate!) && pmt.amount > 0,
+        ));
+
+    if (attendedSinceIdle || paidSinceIdle) continue;
+
+    const existingLead = crmLeads.find((l) => l.linkedPlayerId === p.id);
+    if (existingLead && existingLead.stage === "lost_churned") continue;
+
+    churnCandidates.push({
+      player: p,
+      daysIdle,
+      churnReason: `Auto-Churned: Idle since ${p.idleSinceDate} (${daysIdle} days > ${thresholdLabel} threshold without payment or attendance)`,
+    });
+  }
+
+  return {
+    thresholdDays,
+    thresholdLabel,
+    churnCandidates,
+  };
+}
+
+export {
+  getTenantSlug,
+  MAX_BRANCH_LOG_ENTRIES,
+  capBranchSubArrays,
+  atomicRunBranchTransaction,
+  atomicBookCourtReservationTransaction,
+  atomicBookPhysioAppointmentTransaction,
+  atomicCompletePosSaleTransaction,
+  atomicGymCheckInTransaction,
+  atomicBatchSaveEntities,
+};
 
 /**
  * Historical Query Bounds:
- * Restricts real-time onSnapshot listeners on ledger and sessions to prevent unbounded memory growth.
+ * Restricts real-time onSnapshot listeners on high-growth collections to prevent unbounded memory growth.
  * By default bounds queries to the active season or 90-day sliding window.
  */
 export const HISTORICAL_QUERY_WINDOW_DAYS = 90;
+
+export const HISTORICAL_BOUNDED_COLLECTIONS: ReadonlySet<keyof DB> = new Set([
+  "ledger",
+  "sessions",
+  "posTransactions",
+  "courtReservations",
+]);
 
 export function getHistoricalQueryBoundary(
   windowDays: number = HISTORICAL_QUERY_WINDOW_DAYS,
@@ -2509,11 +3280,135 @@ export async function fetchHistoricalSessions(
 
 const lastSyncedUsernameMapByTenant = new Map<string, string>();
 
+export type ActiveRoleAccessContext = {
+  role?: string | null;
+  email?: string | null;
+  permissions?: Record<string, PermissionPower> | null;
+};
+
+let activeRoleAccessContext: ActiveRoleAccessContext = {};
+
+export function setActiveRoleAccessContext(ctx: ActiveRoleAccessContext) {
+  activeRoleAccessContext = ctx;
+}
+
+export const SENSITIVE_ROLE_GATED_COLLECTIONS: ReadonlySet<CollectionKey> = new Set([
+  "physioRecords",
+  "ledger",
+  "staff",
+  "posTransactions",
+]);
+
+function resolveEffectiveUserAccess(ctxOverride?: ActiveRoleAccessContext): {
+  role: string;
+  email: string;
+  permissions: Record<string, PermissionPower> | undefined;
+  isAdmin: boolean;
+} {
+  const ctx = ctxOverride || activeRoleAccessContext;
+  const email = (ctx.email || auth?.currentUser?.email || "").trim().toLowerCase();
+  let role = (ctx.role || "").trim();
+  let permissions = ctx.permissions || undefined;
+
+  if (!role && (email || auth?.currentUser?.uid)) {
+    const usersSlice = (dbStore.getSlice("users") as UserAccount[]) || [];
+    const uid = auth?.currentUser?.uid;
+    const matched = usersSlice.find(
+      (u) =>
+        (uid && (u.id === uid || u.authUid === uid)) ||
+        (email && u.email && u.email.trim().toLowerCase() === email),
+    );
+    if (matched) {
+      role = matched.role || "";
+      permissions =
+        permissions ||
+        (matched as UserAccount & { permissions?: Record<string, PermissionPower> }).permissions;
+    }
+  }
+
+  const isAdmin = isTenantAdminRoleOrEmail(role, email);
+  if (!permissions && role) {
+    const rolesList =
+      (dbStore.getSlice("customRoles") as RoleDefinition[]) || defaultRoleDefinitions;
+    const roleLower = normalizeUiRole(role).trim().toLowerCase();
+    const roleDef =
+      rolesList.find((r) => r.name.trim().toLowerCase() === roleLower) ||
+      defaultRoleDefinitions.find((r) => r.name.trim().toLowerCase() === roleLower);
+    permissions = roleDef?.permissions;
+  }
+
+  return { role, email, permissions, isAdmin };
+}
+
+export function canUserAccessCollection(
+  key: keyof DB,
+  ctxOverride?: ActiveRoleAccessContext,
+): boolean {
+  if (!SENSITIVE_ROLE_GATED_COLLECTIONS.has(key as CollectionKey)) {
+    return true;
+  }
+  const { role, permissions, isAdmin } = resolveEffectiveUserAccess(ctxOverride);
+  if (isAdmin) return true;
+
+  const roleLower = (role || "").trim().toLowerCase().replace(/_/g, " ");
+  if (!roleLower) return false;
+
+  if (key === "physioRecords") {
+    return [
+      "super admin",
+      "academy manager",
+      "branch manager",
+      "physiotherapist",
+      "doctor",
+      "medical",
+    ].includes(roleLower);
+  }
+
+  if (key === "ledger") {
+    return (
+      ["super admin", "academy manager", "accountant", "branch manager"].includes(roleLower) ||
+      Boolean(permissions?.accounting?.read)
+    );
+  }
+
+  if (key === "posTransactions") {
+    return (
+      ["super admin", "academy manager", "accountant", "branch manager"].includes(roleLower) ||
+      Boolean(permissions?.accounting?.read || permissions?.merchandise?.read)
+    );
+  }
+
+  if (key === "staff") {
+    return (
+      [
+        "super admin",
+        "academy manager",
+        "branch manager",
+        "technical director",
+        "accountant",
+      ].includes(roleLower) || Boolean(permissions?.staff?.read)
+    );
+  }
+
+  return true;
+}
+
+export function canUserViewStaffSalary(ctxOverride?: ActiveRoleAccessContext): boolean {
+  const { role, permissions, isAdmin } = resolveEffectiveUserAccess(ctxOverride);
+  if (isAdmin) return true;
+  const roleLower = (role || "").trim().toLowerCase().replace(/_/g, " ");
+  if (!roleLower) return false;
+  return (
+    ["super admin", "academy manager", "accountant"].includes(roleLower) ||
+    Boolean(permissions?.accounting?.read)
+  );
+}
+
 async function ensureAuthForWrite(): Promise<boolean> {
-  if (auth?.currentUser) return true;
-  const waitedUser = await new Promise<unknown>((resolve) => {
+  if (auth?.currentUser && !auth.currentUser.isAnonymous) return true;
+  const waitedUser = await new Promise<{ isAnonymous?: boolean } | null>((resolve) => {
     if (!auth) return resolve(null);
-    if (auth.currentUser) return resolve(auth.currentUser);
+    if (auth.currentUser && !auth.currentUser.isAnonymous) return resolve(auth.currentUser);
     let settled = false;
     const timer = setTimeout(() => {
       if (!settled) {
@@ -2523,7 +3418,7 @@ async function ensureAuthForWrite(): Promise<boolean> {
       }
     }, 2500);
     const unsub = auth.onAuthStateChanged((u) => {
-      if (u && !settled) {
+      if (u && !u.isAnonymous && !settled) {
         settled = true;
         clearTimeout(timer);
         unsub();
@@ -2531,14 +3426,9 @@ async function ensureAuthForWrite(): Promise<boolean> {
       }
     });
   });
-  if (waitedUser || auth?.currentUser) return true;
-  try {
-    const { signInAnonymously } = await import("firebase/auth");
-    const cred = await signInAnonymously(auth);
-    return Boolean(cred?.user);
-  } catch {
-    return Boolean(auth?.currentUser);
-  }
+  return Boolean(
+    (waitedUser && !waitedUser.isAnonymous) || (auth?.currentUser && !auth.currentUser.isAnonymous),
+  );
 }
 
 /**
@@ -2548,10 +3438,24 @@ async function ensureAuthForWrite(): Promise<boolean> {
  */
 export function ensureCollectionSubscribed(key: keyof DB, tenantId: string) {
   if (!tenantId) return;
-  if (!auth?.currentUser) return;
+  if (!auth?.currentUser || auth.currentUser.isAnonymous) return;
 
   // Non-collection singletons: managed by dedicated eager listeners or root tenant doc
   if (key === "academy" || key === "appearance" || key === "lists" || key === "ageCategoryRules") {
+    return;
+  }
+
+  // Gate sensitive collections by signed-in user role/permissions so unauthorized roles
+  // do not preload or retain restricted records in client state.
+  if (SENSITIVE_ROLE_GATED_COLLECTIONS.has(key as CollectionKey) && !canUserAccessCollection(key)) {
+    if (dbStore.isSubscribed(key)) {
+      dbStore.unregisterSubscription(key);
+    }
+    dbStore.markHydrated(key);
+    const prevRestricted = dbStore.getSlice(key);
+    if (Array.isArray(prevRestricted) && prevRestricted.length > 0) {
+      dbStore.setSlice(key, [] as unknown as DB[typeof key]);
+    }
     return;
   }
 
@@ -2629,9 +3533,11 @@ export function ensureCollectionSubscribed(key: keyof DB, tenantId: string) {
   }
 
   let q;
-  if (key === "ledger" || key === "sessions") {
+  if (HISTORICAL_BOUNDED_COLLECTIONS.has(key)) {
     const boundaryDate = getHistoricalQueryBoundary(HISTORICAL_QUERY_WINDOW_DAYS);
     q = query(collection(firestore, "tenants", tenantId, key), where("date", ">=", boundaryDate));
+  } else if (key === "notifications") {
+    q = query(collection(firestore, "tenants", tenantId, key), limit(100));
   } else {
     q = collection(firestore, "tenants", tenantId, key);
   }
@@ -2660,6 +3566,9 @@ export function ensureCollectionSubscribed(key: keyof DB, tenantId: string) {
         for (const staleId of staleErrorNotifIds) {
           deleteDoc(doc(firestore, "tenants", tenantId, "notifications", staleId)).catch(() => {});
         }
+        items = (items as AcademyNotification[])
+          .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")))
+          .slice(0, 100);
         if (snapshot.empty && seedNotifications.length) {
           seedNotifications.forEach((n) => {
             dispatchAcademyNotification(tenantId, n).catch(() => {});
@@ -2683,34 +3592,58 @@ export function ensureCollectionSubscribed(key: keyof DB, tenantId: string) {
         }
         return;
       }
-      if (key === "users" && items.length > 0) {
-        items = (items as UserAccount[]).map((u) => ({
-          ...u,
-          role: normalizeUiRole(u.role),
+      if (key === "coaches" && items.length > 0) {
+        items = (items as Record<string, unknown>[]).map((c) => {
+          const cleanCoach = { ...c };
+          delete cleanCoach.password;
+          delete cleanCoach.passwordHash;
+          return cleanCoach;
+        });
+      }
+      if (key === "staff" && items.length > 0 && !canUserViewStaffSalary()) {
+        items = (items as Staff[]).map((s) => ({
+          ...s,
+          salary: 0,
         }));
-        const usernameMap: Record<string, string> = {};
-        for (const u of items as UserAccount[]) {
-          const emailLower = u.email?.trim().toLowerCase();
-          if (emailLower && u.active !== false) {
-            const unameLower = (u.username || emailLower.split("@")[0] || "").trim().toLowerCase();
-            if (unameLower) {
-              usernameMap[unameLower] = emailLower;
-            }
-            const emailPrefix = emailLower.split("@")[0]?.trim().toLowerCase();
-            if (emailPrefix && !usernameMap[emailPrefix]) {
-              usernameMap[emailPrefix] = emailLower;
+      }
+      if (key === "users" && items.length > 0) {
+        items = (items as UserAccount[]).map((u) => {
+          const cleanUser = {
+            ...u,
+            role: normalizeUiRole(u.role),
+          };
+          delete (cleanUser as Record<string, unknown>).password;
+          delete (cleanUser as Record<string, unknown>).passwordHash;
+          return cleanUser;
+        });
+        const { isAdmin } = resolveEffectiveUserAccess();
+        if (isAdmin) {
+          const usernameMap: Record<string, string> = {};
+          for (const u of items as UserAccount[]) {
+            const emailLower = u.email?.trim().toLowerCase();
+            if (emailLower && u.active !== false) {
+              const unameLower = (u.username || emailLower.split("@")[0] || "")
+                .trim()
+                .toLowerCase();
+              if (unameLower) {
+                usernameMap[unameLower] = emailLower;
+              }
+              const emailPrefix = emailLower.split("@")[0]?.trim().toLowerCase();
+              if (emailPrefix && !usernameMap[emailPrefix]) {
+                usernameMap[emailPrefix] = emailLower;
+              }
             }
           }
-        }
-        if (Object.keys(usernameMap).length > 0) {
-          const serializedMap = JSON.stringify(usernameMap);
-          if (lastSyncedUsernameMapByTenant.get(tenantId) !== serializedMap) {
-            lastSyncedUsernameMapByTenant.set(tenantId, serializedMap);
-            setDoc(
-              doc(firestore, "tenants", tenantId, "public", "auth_lookup"),
-              { usernameMap },
-              { merge: true },
-            ).catch(() => {});
+          if (Object.keys(usernameMap).length > 0) {
+            const serializedMap = JSON.stringify(usernameMap);
+            if (lastSyncedUsernameMapByTenant.get(tenantId) !== serializedMap) {
+              lastSyncedUsernameMapByTenant.set(tenantId, serializedMap);
+              setDoc(
+                doc(firestore, "tenants", tenantId, "public", "auth_lookup"),
+                { usernameMap },
+                { merge: true },
+              ).catch(() => {});
+            }
           }
         }
       }
@@ -2770,9 +3703,7 @@ export const CORE_PRELOAD_COLLECTIONS: CollectionKey[] = [
   "sessions",
   "coaches",
   "branches",
-  "ledger",
   "invoices",
-  "staff",
   "stock",
   "orders",
   "attendance",
@@ -2788,8 +3719,10 @@ export const CORE_PRELOAD_COLLECTIONS: CollectionKey[] = [
   "crmLeads",
   "courtReservations",
   "gymMembers",
-  "physioRecords",
   "posCatalog",
+  "ledger",
+  "staff",
+  "physioRecords",
   "posTransactions",
 ];
 
@@ -2800,7 +3733,23 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const tenantId = getTenantSlug() || "donbosco";
   const authUid = user?.uid || auth?.currentUser?.uid || null;
-  const isAuthenticated = !authLoading && Boolean(authUid && (user || passwordUser));
+  const isAuthenticated =
+    !authLoading && Boolean(authUid && !user?.isAnonymous && (user || passwordUser));
+
+  const activeEmail = (user?.email || passwordUser?.email || auth?.currentUser?.email || "")
+    .trim()
+    .toLowerCase();
+  const activeRole =
+    passwordUser?.role || (isProtectedSuperAdminEmail(activeEmail) ? "Super Admin" : undefined);
+  const activePerms = (
+    passwordUser as (UserAccount & { permissions?: Record<string, PermissionPower> }) | null
+  )?.permissions;
+
+  setActiveRoleAccessContext({
+    role: activeRole,
+    email: activeEmail,
+    permissions: activePerms || null,
+  });
 
   // Synchronously align active tenant before child renders/effects subscribe to collections
   // so parent useEffect never wipes child useCollection subscriptions via resetTenant().
@@ -2808,17 +3757,42 @@ export function DataProvider({ children }: { children: ReactNode }) {
     dbStore.resetTenant(tenantId);
   }
 
-  // Synchronously pre-subscribe core collections on the client ONLY after Firebase Auth has
+  // Synchronously pre-subscribe allowed core collections on the client ONLY after Firebase Auth has
   // finished restoring auth.currentUser so listeners never fail with pre-auth permission-denied.
-  if (typeof window !== "undefined" && isAuthenticated && auth?.currentUser && tenantId) {
+  if (
+    typeof window !== "undefined" &&
+    isAuthenticated &&
+    auth?.currentUser &&
+    !auth.currentUser.isAnonymous &&
+    tenantId
+  ) {
     for (const colKey of CORE_PRELOAD_COLLECTIONS) {
-      ensureCollectionSubscribed(colKey, tenantId);
+      if (canUserAccessCollection(colKey)) {
+        ensureCollectionSubscribed(colKey, tenantId);
+      }
     }
   }
 
   // Bind queryClient to reactive store for cache sync & initialize global error flight recorder
   useEffect(() => {
     dbStore.hydrateFromLocalCache(tenantId);
+    for (const restrictedKey of SENSITIVE_ROLE_GATED_COLLECTIONS) {
+      if (!canUserAccessCollection(restrictedKey)) {
+        if (dbStore.isSubscribed(restrictedKey)) {
+          dbStore.unregisterSubscription(restrictedKey);
+        }
+        dbStore.setSlice(restrictedKey, [] as unknown as DB[typeof restrictedKey]);
+      }
+    }
+    if (canUserAccessCollection("staff") && !canUserViewStaffSalary()) {
+      const currentStaff = (dbStore.getSlice("staff") as Staff[]) || [];
+      if (currentStaff.some((s) => Boolean(s.salary))) {
+        dbStore.setSlice(
+          "staff",
+          currentStaff.map((s) => ({ ...s, salary: 0 })),
+        );
+      }
+    }
     initGlobalErrorTelemetry();
     dbStore.setQueryClient(queryClient);
     return () => {
@@ -2827,8 +3801,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, [queryClient, tenantId]);
 
   useEffect(() => {
-    const activeEmail = user?.email || passwordUser?.email || "";
-    const activeRole = passwordUser?.role || "";
     const activeBranch = passwordUser?.branch || "";
     setErrorLoggerUserContext({
       tenantId,
@@ -2836,7 +3808,37 @@ export function DataProvider({ children }: { children: ReactNode }) {
       ...(activeRole ? { userRole: activeRole } : {}),
       ...(activeBranch ? { userBranch: activeBranch } : {}),
     });
-  }, [tenantId, user?.email, passwordUser?.email, passwordUser?.role, passwordUser?.branch]);
+
+    // Enforce role-gating on sensitive collections whenever signed-in user role or permissions change
+    for (const restrictedKey of SENSITIVE_ROLE_GATED_COLLECTIONS) {
+      if (!isAuthenticated || !canUserAccessCollection(restrictedKey)) {
+        if (dbStore.isSubscribed(restrictedKey)) {
+          dbStore.unregisterSubscription(restrictedKey);
+        }
+        const currentSlice = dbStore.getSlice(restrictedKey);
+        if (Array.isArray(currentSlice) && currentSlice.length > 0) {
+          dbStore.setSlice(restrictedKey, [] as unknown as DB[typeof restrictedKey]);
+        }
+      } else if (
+        isAuthenticated &&
+        auth?.currentUser &&
+        !auth.currentUser.isAnonymous &&
+        tenantId
+      ) {
+        ensureCollectionSubscribed(restrictedKey, tenantId);
+      }
+    }
+
+    if (canUserAccessCollection("staff") && !canUserViewStaffSalary()) {
+      const currentStaff = (dbStore.getSlice("staff") as Staff[]) || [];
+      if (currentStaff.some((s) => Boolean(s.salary))) {
+        dbStore.setSlice(
+          "staff",
+          currentStaff.map((s) => ({ ...s, salary: 0 })),
+        );
+      }
+    }
+  }, [tenantId, isAuthenticated, activeEmail, activeRole, passwordUser?.branch, activePerms]);
 
   // Subscribe to whole store updates via useSyncExternalStore (with SSR support)
   const currentDB = useSyncExternalStore(
@@ -2852,7 +3854,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
       get(target, prop) {
         if (typeof prop === "string" && prop in target) {
           const key = prop as keyof DB;
-          if (isAuthenticated && auth?.currentUser && tenantId) {
+          if (
+            isAuthenticated &&
+            auth?.currentUser &&
+            !auth.currentUser.isAnonymous &&
+            tenantId &&
+            canUserAccessCollection(key)
+          ) {
             ensureCollectionSubscribed(key, tenantId);
           }
           return target[key];
@@ -2867,37 +3875,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    if (!isAuthenticated || !auth?.currentUser) {
+    if (!isAuthenticated || !auth?.currentUser || auth.currentUser.isAnonymous) {
       setReady(true);
       return;
     }
 
     if (dbStore.getActiveTenant() !== tenantId) {
       dbStore.resetTenant(tenantId);
-    } else {
-      // Clear any dead/failed subscriptions from pre-auth state before re-subscribing with valid authUid
-      dbStore.unsubscribeAll();
     }
 
-    // Eagerly pre-subscribe core operational collections immediately on authenticated tenant mount
-    // so Firestore persistentLocalCache hydrates slices once at boot and sidebar navigation never flashes.
-    const eagerCollections: (keyof DB)[] = [
-      "players",
-      "teams",
-      "sessions",
-      "coaches",
-      "branches",
-      "ledger",
-      "invoices",
-      "staff",
-      "stock",
-      "orders",
-      "attendance",
-      "customRoles",
-      ...CORE_PRELOAD_COLLECTIONS,
-    ];
-    for (const colKey of eagerCollections) {
-      ensureCollectionSubscribed(colKey, tenantId);
+    // Ensure allowed core operational collections are subscribed once on authenticated tenant mount
+    // (ensureCollectionSubscribed is idempotent and skips already-subscribed collections).
+    for (const colKey of CORE_PRELOAD_COLLECTIONS) {
+      if (canUserAccessCollection(colKey)) {
+        ensureCollectionSubscribed(colKey, tenantId);
+      }
     }
 
     let isMounted = true;
@@ -3103,6 +4095,24 @@ export function DataProvider({ children }: { children: ReactNode }) {
             delete (mergedAcademy as Record<string, unknown>)[field];
           }
         }
+        if (mergedAcademy.paymentGateway && typeof mergedAcademy.paymentGateway === "object") {
+          delete (mergedAcademy.paymentGateway as Record<string, unknown>).secretKey;
+          delete (mergedAcademy.paymentGateway as Record<string, unknown>).webhookSecret;
+        }
+        if (
+          mergedAcademy.notificationServices &&
+          typeof mergedAcademy.notificationServices === "object"
+        ) {
+          delete (mergedAcademy.notificationServices as Record<string, unknown>).smsApiKey;
+          delete (mergedAcademy.notificationServices as Record<string, unknown>).emailApiKey;
+        }
+        if (
+          mergedAcademy.notificationConfig &&
+          typeof mergedAcademy.notificationConfig === "object"
+        ) {
+          delete (mergedAcademy.notificationConfig as Record<string, unknown>).smsApiKey;
+          delete (mergedAcademy.notificationConfig as Record<string, unknown>).emailApiKey;
+        }
         dbStore.markHydrated("academy");
         dbStore.setSlice("academy", mergedAcademy);
       }
@@ -3191,11 +4201,6 @@ export function DataProvider({ children }: { children: ReactNode }) {
     );
     unsubscribes.push(unsubLists);
     dbStore.registerSubscription("lists", unsubLists);
-
-    // Preload identical operational collections across both mobile and desktop viewports
-    for (const colKey of CORE_PRELOAD_COLLECTIONS) {
-      ensureCollectionSubscribed(colKey, tenantId);
-    }
 
     return () => {
       isMounted = false;
@@ -3452,7 +4457,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
   }, [evaluateIdlePlayersForCompletedSession]);
 
   const setEntity = useCallback(
-    async <K extends CollectionKey>(collectionName: K, item: DB[K][number]) => {
+    async <K extends CollectionKey>(collectionName: K, rawItem: DB[K][number]) => {
+      const item =
+        collectionName === "branches"
+          ? (capBranchSubArrays(
+              rawItem as unknown as Record<string, unknown>,
+            ) as unknown as DB[K][number])
+          : rawItem;
       // Capture previous slice snapshot before optimistic update
       const previousSlice = (dbStore.getSlice(collectionName) as Array<{ id: string }>) || [];
       const prevItem = previousSlice.find((x) => x.id === (item as { id: string }).id) as
@@ -3473,7 +4484,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
             void evaluateIdlePlayersForCompletedSession(sItem);
           }
         }
-        if (collectionName === "players" || collectionName === "branches") {
+        if (
+          (collectionName === "players" || collectionName === "branches") &&
+          resolveEffectiveUserAccess().isAdmin
+        ) {
           const countField = collectionName === "players" ? "playersCount" : "branchesCount";
           const usedField = collectionName === "players" ? "playersUsed" : "branchesUsed";
           await atomicUpdateAcademy(tenantId, {
@@ -3523,7 +4537,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
             ? { email: userItem.email, authUid: userItem.authUid, id: userItem.id }
             : undefined,
         );
-        if (collectionName === "players" || collectionName === "branches") {
+        if (
+          (collectionName === "players" || collectionName === "branches") &&
+          resolveEffectiveUserAccess().isAdmin
+        ) {
           const countField = collectionName === "players" ? "playersCount" : "branchesCount";
           const usedField = collectionName === "players" ? "playersUsed" : "branchesUsed";
           await atomicUpdateAcademy(tenantId, {
@@ -3596,6 +4613,103 @@ export function DataProvider({ children }: { children: ReactNode }) {
       }
     },
     [tenantId, evaluateIdlePlayersForCompletedSession],
+  );
+
+  const runBranchArrayTransaction = useCallback(
+    async (
+      branchId: string,
+      updaterFn: (currentBranch: Branch) => Branch,
+      fallbackBranch?: Branch,
+    ): Promise<Branch> => {
+      const previousBranches = (dbStore.getSlice("branches") as Branch[]) || [];
+      const existingBranch =
+        previousBranches.find(
+          (b) => b.id === branchId || (b.name || "").toLowerCase() === branchId.toLowerCase(),
+        ) || fallbackBranch;
+      const targetId = existingBranch?.id || branchId;
+      const baseBranch: Branch =
+        existingBranch ||
+        ({
+          id: targetId,
+          name: branchId || "Main Branch",
+          city: "Beirut",
+          address: "Main Facility Campus",
+          manager: "Branch Manager",
+          operatingHours: "08:00 - 23:00",
+          courtsCount: 2,
+          teams: 0,
+          players: 0,
+          rentalType: "Per session",
+          rentalRate: 60,
+        } as Branch);
+
+      const optimisticBranch = capBranchSubArrays(
+        updaterFn(baseBranch) as unknown as Record<string, unknown>,
+      ) as unknown as Branch;
+      const hasInStore = previousBranches.some((b) => b.id === targetId);
+      dbStore.setSlice(
+        "branches",
+        hasInStore
+          ? previousBranches.map((b) => (b.id === targetId ? optimisticBranch : b))
+          : [optimisticBranch, ...previousBranches],
+      );
+
+      try {
+        await ensureAuthForWrite();
+        const committedBranch = await atomicRunBranchTransaction(
+          tenantId,
+          targetId,
+          baseBranch,
+          updaterFn,
+        );
+        const latestBranches = (dbStore.getSlice("branches") as Branch[]) || [];
+        const existsNow = latestBranches.some((b) => b.id === targetId);
+        dbStore.setSlice(
+          "branches",
+          existsNow
+            ? latestBranches.map((b) => (b.id === targetId ? committedBranch : b))
+            : [committedBranch, ...latestBranches],
+        );
+        return committedBranch;
+      } catch (err: unknown) {
+        dbStore.setSlice("branches", previousBranches);
+        const errMsg = err instanceof Error ? err.message : "Transaction error";
+        toast.error(`Failed to update branch: ${errMsg}. Reverting changes.`);
+        throw err;
+      }
+    },
+    [tenantId],
+  );
+
+  const cascadeBranchAndCourtRename = useCallback(
+    async (
+      params: BranchAndCourtRenameParams,
+    ): Promise<{ updatedRecordsCount: number; branchRecord: Branch }> => {
+      const currentDbSnapshot = dbStore.getDB();
+      const { nextDb, updatedBranchRecord, batchOps } = applyBranchAndCourtRenameToDB(
+        currentDbSnapshot,
+        params,
+      );
+
+      dbStore.setDB(nextDb);
+      setDb(nextDb);
+
+      try {
+        await ensureAuthForWrite();
+        await atomicBatchSaveEntities(tenantId, batchOps);
+        return {
+          updatedRecordsCount: Math.max(0, batchOps.length - 1),
+          branchRecord: updatedBranchRecord,
+        };
+      } catch (err: unknown) {
+        dbStore.setDB(currentDbSnapshot);
+        setDb(currentDbSnapshot);
+        const errMsg = err instanceof Error ? err.message : "Batch cascade error";
+        toast.error(`Failed to save branch and cascade updates: ${errMsg}. Reverting changes.`);
+        throw err;
+      }
+    },
+    [tenantId],
   );
 
   const recordAttendance = useCallback(
@@ -3681,11 +4795,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
           // IDLE STATE LOGIC: First attendance marked "Present" in a team session transitions player from "Idle" to "Active"
           if (matchedPlayer && matchedPlayer.status === "Idle") {
+            const todayIso = new Date().toISOString().slice(0, 10);
+            const nowIso = new Date().toISOString();
             const idleResetPatch: Partial<Player> = {
               status: "Active",
               missedSessionsSinceIdle: 0,
               idleSinceDate: "",
               idleMissedSessionIds: [],
+              crmFollowUpStatus: "Active / Converted",
+              crmMovedAt: todayIso,
             };
             const updatedPlayersList = currentPlayers.map((p) =>
               p.id === playerId ? { ...p, ...idleResetPatch } : p,
@@ -3700,6 +4818,29 @@ export function DataProvider({ children }: { children: ReactNode }) {
             ).catch((e) =>
               console.warn("Failed to persist Idle->Active attendance transition:", e),
             );
+
+            // Sync any linked CRM lead from "idle_followup" to "active_converted"
+            const currentLeads = (dbStore.getSlice("crmLeads") as CrmLead[]) || [];
+            const linkedLead = currentLeads.find(
+              (l) =>
+                (l.linkedPlayerId === playerId || l.id === `crm-player-${playerId}`) &&
+                l.stage === "idle_followup",
+            );
+            if (linkedLead) {
+              const updatedLead: CrmLead = {
+                ...linkedLead,
+                stage: "active_converted",
+                convertedAt: todayIso,
+                updatedAt: nowIso,
+              };
+              const nextLeads = currentLeads.map((l) => (l.id === linkedLead.id ? updatedLead : l));
+              dbStore.setSlice("crmLeads", nextLeads);
+              setDb((prev) => ({ ...prev, crmLeads: nextLeads }));
+              await atomicSetItem(tenantId, "crmLeads", updatedLead.id, updatedLead).catch((e) =>
+                console.warn("Failed to sync CRM lead on Idle->Active attendance transition:", e),
+              );
+            }
+
             toast.success(
               `${matchedPlayer.name} marked Present — subscription status transitioned from Idle to Active.`,
             );
@@ -4560,6 +5701,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
                       idleSinceDate: "",
                       missedSessionsSinceIdle: 0,
                       idleMissedSessionIds: [],
+                      crmFollowUpStatus: "Active / Converted",
+                      crmMovedAt: today,
                     }
                   : {}),
               }
@@ -4594,12 +5737,37 @@ export function DataProvider({ children }: { children: ReactNode }) {
                       idleSinceDate: "",
                       missedSessionsSinceIdle: 0,
                       idleMissedSessionIds: [],
+                      crmFollowUpStatus: "Active / Converted",
+                      crmMovedAt: today,
                     }
                   : {}),
               }
             : undefined,
           ledgerEntry as Record<string, unknown> & { id: string },
         );
+
+        if (shouldActivateFromPayment && player) {
+          const currentLeads = (dbStore.getSlice("crmLeads") as CrmLead[]) || [];
+          const linkedLead = currentLeads.find(
+            (l) =>
+              (l.linkedPlayerId === player.id || l.id === `crm-player-${player.id}`) &&
+              l.stage === "idle_followup",
+          );
+          if (linkedLead) {
+            const updatedLead: CrmLead = {
+              ...linkedLead,
+              stage: "active_converted",
+              convertedAt: today,
+              updatedAt: new Date().toISOString(),
+            };
+            const nextLeads = currentLeads.map((l) => (l.id === linkedLead.id ? updatedLead : l));
+            dbStore.setSlice("crmLeads", nextLeads);
+            setDb((prev) => ({ ...prev, crmLeads: nextLeads }));
+            await atomicSetItem(tenantId, "crmLeads", updatedLead.id, updatedLead).catch((e) =>
+              console.warn("Failed to sync CRM lead on payInvoice reactivation:", e),
+            );
+          }
+        }
         dispatchAcademyNotification(tenantId, {
           title: `Tuition Payment Collected: ${invoice.playerName}`,
           message: `Collected ${money(invoice.amount, db.academy?.currency)} for Invoice ${invoice.invoiceNumber} (${invoice.billingMonth} ${invoice.year}) via ${paymentMethod}.`,
@@ -4770,9 +5938,27 @@ export function DataProvider({ children }: { children: ReactNode }) {
                   idleSinceDate: "",
                   missedSessionsSinceIdle: 0,
                   idleMissedSessionIds: [],
+                  crmFollowUpStatus: "Active / Converted",
+                  crmMovedAt: today,
                 }
               : {}),
           });
+
+          if (shouldActivate) {
+            const currentLeads = (dbStore.getSlice("crmLeads") as CrmLead[]) || [];
+            const linkedLead = currentLeads.find(
+              (l) =>
+                (l.linkedPlayerId === p.id || l.id === `crm-player-${p.id}`) &&
+                l.stage === "idle_followup",
+            );
+            if (linkedLead) {
+              await patchEntity("crmLeads", linkedLead.id, {
+                stage: "active_converted",
+                convertedAt: today,
+                updatedAt: new Date().toISOString(),
+              });
+            }
+          }
         }
       }
 
@@ -5017,6 +6203,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
       "resourceFolders",
       "workshops",
       "cron_logs",
+      "crmLeads",
+      "courtReservations",
+      "gymMembers",
+      "physioRecords",
+      "posCatalog",
+      "posTransactions",
+      "errorLogs",
     ];
 
     // 1. Immediately reset in-memory ReactiveDBStore & DataContext state
@@ -6345,12 +7538,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const daysIdle = Math.floor((nowMs - idleStartMs) / (1000 * 60 * 60 * 24));
         if (daysIdle < thresholdDays) continue;
 
-        const idleYm = p.idleSinceDate.slice(0, 7);
-        const currentYm = todayIso.slice(0, 7);
-        const attendedSinceIdle =
-          getPlayerMonthlyPresentCount(p.id, currentSessions, currentAttendance, idleYm) > 0 ||
-          (currentYm !== idleYm &&
-            getPlayerMonthlyPresentCount(p.id, currentSessions, currentAttendance, currentYm) > 0);
+        const attendedSinceIdle = currentSessions.some((s) => {
+          if (!s || (s.status || "").toLowerCase() === "cancelled") return false;
+          if (!s.date || s.date < p.idleSinceDate!) return false;
+          const mapForSess = currentAttendance[s.id];
+          const recStatus = mapForSess?.[p.id];
+          if (typeof recStatus === "string") {
+            return recStatus.toLowerCase() === "present";
+          }
+          return Array.isArray(s.attendees) && s.attendees.includes(p.id);
+        });
 
         const paidSinceIdle =
           currentInvoices.some((inv) => {
@@ -6542,6 +7739,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       convertCrmLeadToPlayer,
       runCrmAutoChurnCheck,
       setPlayerIdleForRenewal,
+      runBranchArrayTransaction,
+      cascadeBranchAndCourtRename,
       resetDemo,
       clearData,
       loadDemo,
@@ -6556,6 +7755,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setEntity,
       deleteEntity,
       patchEntity,
+      runBranchArrayTransaction,
+      cascadeBranchAndCourtRename,
       recordAttendance,
       processMerchandiseTransaction,
       settleMerchandiseOrder,

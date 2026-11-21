@@ -7,7 +7,6 @@ import {
   signInWithRedirect,
   getRedirectResult,
   signInWithCredential,
-  signInAnonymously,
   GoogleAuthProvider,
   browserPopupRedirectResolver,
   signInWithEmailAndPassword,
@@ -120,6 +119,7 @@ export async function provisionFirebaseAuthUser(
 function stripPassword(user: UserAccount): UserAccount {
   const clean = { ...user };
   delete (clean as Record<string, unknown>).password;
+  delete (clean as Record<string, unknown>).passwordHash;
   return clean;
 }
 
@@ -139,10 +139,20 @@ export function isSuperAdminRoleOrEmail(role?: string | null, email?: string | n
   );
 }
 
+export function isTenantAdminRoleOrEmail(role?: string | null, email?: string | null): boolean {
+  const normRole = normalizeUiRole(role);
+  return (
+    isSuperAdminRoleOrEmail(role, email) ||
+    normRole === "Academy Manager" ||
+    role === "ACADEMY_MANAGER" ||
+    role === "academy_manager"
+  );
+}
+
 /**
- * Automatically bootstraps/upserts the current authenticated user's `users/{uid}` document
- * in Firestore with `role: "SUPER_ADMIN"` (plus tenant user document) when their UI role
- * resolves to Super Admin so Firestore security rules examining user documents pass immediately.
+ * Automatically bootstraps/upserts the current authenticated admin user's `users/{uid}` document
+ * and tenant `/tenants/{tenantId}/users/{uid}` document without exposing password or passwordHash fields.
+ * Restricted strictly to authorized tenant admins / super admins.
  */
 export async function bootstrapFirestoreUserDocument(
   tenantId: string,
@@ -154,8 +164,13 @@ export async function bootstrapFirestoreUserDocument(
   const cleanUser = stripPassword(userAccount);
   const emailLower = (cleanUser.email || "").trim().toLowerCase();
   const isSuperAdmin = isSuperAdminRoleOrEmail(cleanUser.role, emailLower);
+  const isTenantAdmin = isTenantAdminRoleOrEmail(cleanUser.role, emailLower);
   const firestoreRole = isSuperAdmin ? "SUPER_ADMIN" : cleanUser.role || "Staff";
   const uiRole = isSuperAdmin ? "Super Admin" : normalizeUiRole(cleanUser.role);
+
+  if (!isTenantAdmin) {
+    return;
+  }
 
   const rootUserPayload: Record<string, unknown> = {
     ...cleanUser,
@@ -168,24 +183,28 @@ export async function bootstrapFirestoreUserDocument(
     updatedAt: new Date().toISOString(),
     ...(permissions ? { permissions } : {}),
   };
+  delete rootUserPayload.password;
+  delete rootUserPayload.passwordHash;
 
   if (isSuperAdmin) {
     await setDoc(doc(db, "users", uid), rootUserPayload, { merge: true }).catch(() => {});
   }
 
-  await setDoc(
-    doc(db, "tenants", tenantId, "users", uid),
-    {
-      ...cleanUser,
-      id: uid,
-      authUid: uid,
-      role: isSuperAdmin ? "SUPER_ADMIN" : uiRole,
-      uiRole,
-      active: cleanUser.active !== false,
-      ...(permissions ? { permissions } : {}),
-    },
-    { merge: true },
-  ).catch(() => {});
+  const tenantUserPayload: Record<string, unknown> = {
+    ...cleanUser,
+    id: uid,
+    authUid: uid,
+    role: isSuperAdmin ? "SUPER_ADMIN" : uiRole,
+    uiRole,
+    active: cleanUser.active !== false,
+    ...(permissions ? { permissions } : {}),
+  };
+  delete tenantUserPayload.password;
+  delete tenantUserPayload.passwordHash;
+
+  await setDoc(doc(db, "tenants", tenantId, "users", uid), tenantUserPayload, {
+    merge: true,
+  }).catch(() => {});
 
   const unameLower = (cleanUser.username || (emailLower ? emailLower.split("@")[0] : "") || "")
     .trim()
@@ -282,62 +301,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (!currentUser) {
         if (typeof window !== "undefined") {
-          const sessionRaw =
-            window.localStorage.getItem("vv_auth_session_user") ||
-            window.sessionStorage.getItem("vv_auth_session_user");
-          if (sessionRaw) {
-            try {
-              const anonCred = await signInAnonymously(auth);
-              if (anonCred?.user) {
-                return;
-              }
-            } catch {
-              window.localStorage.removeItem("vv_auth_session_user");
-              window.sessionStorage.removeItem("vv_auth_session_user");
-              setPasswordUser(null);
-            }
-          }
+          window.localStorage.removeItem("vv_auth_session_user");
+          window.sessionStorage.removeItem("vv_auth_session_user");
         }
+        setPasswordUser(null);
         setUser(null);
         setLoading(false);
         return;
       }
 
       if (currentUser.isAnonymous) {
+        // Anonymous Firebase Auth sessions are strictly rejected to prevent authorization bypasses.
         if (typeof window !== "undefined") {
-          const sessionRaw =
-            window.localStorage.getItem("vv_auth_session_user") ||
-            window.sessionStorage.getItem("vv_auth_session_user");
-          if (sessionRaw) {
-            try {
-              const parsed = JSON.parse(sessionRaw) as UserAccount;
-              if (parsed && (parsed.email || parsed.username || parsed.id)) {
-                const resolvedRole = isSuperAdminRoleOrEmail(parsed.role, parsed.email)
-                  ? "Super Admin"
-                  : normalizeUiRole(parsed.role || "Super Admin");
-                const syncedUser: UserAccount = {
-                  ...parsed,
-                  id: currentUser.uid,
-                  authUid: currentUser.uid,
-                  role: resolvedRole,
-                  active: true,
-                };
-                if (db && lastSyncedUid !== currentUser.uid) {
-                  lastSyncedUid = currentUser.uid;
-                  await bootstrapFirestoreUserDocument(tenantId, currentUser.uid, syncedUser);
-                }
-                setPasswordUser(syncedUser);
-                setUser(currentUser);
-                setLoading(false);
-                return;
-              }
-            } catch {
-              // ignore malformed session storage
-            }
-          }
+          window.localStorage.removeItem("vv_auth_session_user");
+          window.sessionStorage.removeItem("vv_auth_session_user");
         }
-        // Orphan anonymous Firebase session with no active passwordUser in storage:
-        // Sign out immediately so mobile & desktop always show the canonical Root Login screen
         await signOut(auth).catch(() => {});
         setPasswordUser(null);
         setUser(null);
@@ -897,7 +875,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     let matchedDocId: string | null = matched?.id || null;
 
-    // Resolve bare username (without '@') via Firestore usernameMap on /tenants/{tenantId}/public/auth_lookup or /tenants/{tenantId}
+    // Resolve bare username (without '@') via Firestore usernameMap on /tenants/{tenantId}/public/auth_lookup
     const isBareUsername = !normalizedInput.includes("@");
     let emailToAuth = "";
     if (!isBareUsername) {
@@ -912,16 +890,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               ?.usernameMap;
             if (uMap && typeof uMap[normalizedInput] === "string") {
               resolvedFromFirestore = uMap[normalizedInput].trim().toLowerCase();
-            }
-          }
-          if (!resolvedFromFirestore) {
-            const tenantSnap = await getDoc(doc(db, "tenants", tenantId));
-            if (tenantSnap.exists()) {
-              const uMap = (tenantSnap.data() as { usernameMap?: Record<string, string> })
-                ?.usernameMap;
-              if (uMap && typeof uMap[normalizedInput] === "string") {
-                resolvedFromFirestore = uMap[normalizedInput].trim().toLowerCase();
-              }
             }
           }
         } catch {
@@ -1019,6 +987,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (uidSnap.exists()) {
           const data = uidSnap.data() as UserAccount;
           delete (data as Record<string, unknown>).password;
+          delete (data as Record<string, unknown>).passwordHash;
           matched = data;
           matchedDocId = uidSnap.id;
         } else {
@@ -1027,6 +996,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (!qSnap.empty) {
             const data = qSnap.docs[0].data() as UserAccount;
             delete (data as Record<string, unknown>).password;
+            delete (data as Record<string, unknown>).passwordHash;
             matched = data;
             matchedDocId = qSnap.docs[0].id;
           } else if (isBareUsername) {
@@ -1034,6 +1004,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             if (!uSnap.empty) {
               const data = uSnap.docs[0].data() as UserAccount;
               delete (data as Record<string, unknown>).password;
+              delete (data as Record<string, unknown>).passwordHash;
               matched = data;
               matchedDocId = uSnap.docs[0].id;
             }

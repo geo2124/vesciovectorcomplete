@@ -101,6 +101,7 @@ function BranchesPage() {
     patchEntity,
     editLedgerTransaction,
     deleteLedgerTransaction,
+    cascadeBranchAndCourtRename,
     update,
     tenantId,
     ready,
@@ -760,77 +761,70 @@ function BranchesPage() {
       ? { ...editing, ...clean, name: newName }
       : { ...clean, name: newName, id: `b-${Date.now().toString(36)}` };
 
-    if (editing && oldName && oldName !== newName) {
-      update((prev) => {
-        const nextBranches = prev.branches.map((b) => (b.id === bData.id ? bData : b));
-        const nextPlayers = prev.players.map((p) =>
-          p.branch === oldName ? { ...p, branch: newName } : p,
-        );
-        const nextTeams = prev.teams.map((t) =>
-          t.branch === oldName ? { ...t, branch: newName } : t,
-        );
-        const nextCoaches = prev.coaches.map((c) => {
-          let modified = false;
-          let primaryBranch = c.branch;
-          let assignedBranches = c.branches;
+    if (editing) {
+      const courtRenames: Record<string, string> = {};
+      const preservedOldCourtIds = new Set<string>();
+      const preservedOldCourtNamesLower = new Set<string>();
 
-          if (c.branch === oldName) {
-            primaryBranch = newName;
-            modified = true;
+      for (const c of normalizedCourts) {
+        const byId = editing.courts?.find((pc) => pc.id && pc.id === c.id);
+        const byName = !byId
+          ? editing.courts?.find(
+              (pc) => pc.name.trim().toLowerCase() === c.name.trim().toLowerCase(),
+            )
+          : undefined;
+        const prevCourt = byId || byName;
+        if (prevCourt) {
+          if (prevCourt.id) preservedOldCourtIds.add(prevCourt.id);
+          preservedOldCourtNamesLower.add(prevCourt.name.trim().toLowerCase());
+          if (
+            prevCourt.name.trim() &&
+            prevCourt.name.trim().toLowerCase() !== c.name.trim().toLowerCase()
+          ) {
+            courtRenames[prevCourt.name.trim()] = c.name.trim();
           }
-          if (c.branches && c.branches.includes(oldName)) {
-            assignedBranches = c.branches.map((b) => (b === oldName ? newName : b));
-            modified = true;
-          }
-          return modified ? { ...c, branch: primaryBranch, branches: assignedBranches } : c;
+        }
+      }
+
+      const removedCourtNames: string[] = (editing.courts || [])
+        .filter((pc) => {
+          const matchedById = Boolean(pc.id && preservedOldCourtIds.has(pc.id));
+          const matchedByName = preservedOldCourtNamesLower.has(pc.name.trim().toLowerCase());
+          return !matchedById && !matchedByName;
+        })
+        .map((pc) => pc.name.trim())
+        .filter(Boolean);
+
+      try {
+        const { updatedRecordsCount } = await cascadeBranchAndCourtRename({
+          branchId: bData.id,
+          updatedBranch: bData,
+          oldBranchName: oldName,
+          newBranchName: newName,
+          courtRenames,
+          removedCourtNames,
+          fallbackCourtName: normalizedCourts[0]?.name || "Main Court",
         });
-        const nextStaff = prev.staff.map((s) => {
-          let modified = false;
-          let primaryBranch = s.branch;
-          let assignedBranches = s.branches;
-
-          if (s.branch === oldName) {
-            primaryBranch = newName;
-            modified = true;
-          }
-          if (s.branches && s.branches.includes(oldName)) {
-            assignedBranches = s.branches.map((b) => (b === oldName ? newName : b));
-            modified = true;
-          }
-          return modified ? { ...s, branch: primaryBranch, branches: assignedBranches } : s;
-        });
-        const nextSessions = prev.sessions.map((s) =>
-          s.branch === oldName ? { ...s, branch: newName } : s,
+        toast.success(
+          oldName && oldName !== newName
+            ? `Branch "${oldName}" renamed to "${newName}" and cascaded across ${updatedRecordsCount} record(s).`
+            : updatedRecordsCount > 0
+              ? `Branch "${bData.name}" updated and cascaded court changes across ${updatedRecordsCount} record(s).`
+              : `Branch "${bData.name}" details updated successfully.`,
         );
-        const nextLedger = prev.ledger.map((l) =>
-          l.branch === oldName ? { ...l, branch: newName } : l,
-        );
-
-        return {
-          ...prev,
-          branches: nextBranches,
-          players: nextPlayers,
-          teams: nextTeams,
-          coaches: nextCoaches,
-          staff: nextStaff,
-          sessions: nextSessions,
-          ledger: nextLedger,
-        };
-      });
-      toast.success(`Branch "${oldName}" renamed to "${newName}" and cascaded across records.`);
+        setOpen(false);
+      } catch (e) {
+        console.warn("Notice saving branch:", e);
+      }
     } else {
       try {
         await setEntity("branches", bData);
-        toast.success(
-          editing
-            ? `Branch "${bData.name}" details updated successfully.`
-            : `Branch "${bData.name}" created successfully.`,
-        );
+        toast.success(`Branch "${bData.name}" created successfully.`);
+        setOpen(false);
       } catch (e) {
         console.warn("Notice saving branch:", e);
       }
     }
-    setOpen(false);
   }
   function remove(b: Branch) {
     if (!canDeleteBranch) return;

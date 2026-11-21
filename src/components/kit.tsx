@@ -460,6 +460,20 @@ export function Field({
 const controlCls =
   "mt-1.5 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm text-ink-100 ring-1 ring-ink-700 placeholder:text-ink-400 focus:outline-none focus:ring-court-500/60";
 
+function invokeChangeHandler<T extends HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onChange: ((v: any, e?: React.ChangeEvent<T>) => void) | undefined,
+  e: React.ChangeEvent<T>,
+) {
+  if (!onChange) return;
+  const fnSource = Function.prototype.toString.call(onChange);
+  if (/\.(target|currentTarget)\b/.test(fnSource)) {
+    onChange(e);
+  } else {
+    onChange(e.target.value, e);
+  }
+}
+
 export function Input({
   value,
   onChange,
@@ -470,23 +484,33 @@ export function Input({
   autoFocus,
   disabled,
   className,
+  min,
+  max,
+  step,
 }: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  type?: string;
-  list?: string;
-  autoComplete?: string;
-  autoFocus?: boolean;
-  disabled?: boolean;
-  className?: string;
+  value: string | number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onChange?: ((v: any) => void) | undefined;
+  placeholder?: string | undefined;
+  type?: string | undefined;
+  list?: string | undefined;
+  autoComplete?: string | undefined;
+  autoFocus?: boolean | undefined;
+  disabled?: boolean | undefined;
+  className?: string | undefined;
+  min?: string | number | undefined;
+  max?: string | number | undefined;
+  step?: string | number | undefined;
 }) {
   return (
     <input
       type={type}
       value={value ?? ""}
       placeholder={placeholder ?? ""}
-      onChange={(e) => onChange(e.target.value)}
+      min={min}
+      max={max}
+      step={step}
+      onChange={(e) => invokeChangeHandler(onChange, e)}
       list={list}
       autoComplete={autoComplete}
       autoFocus={autoFocus}
@@ -499,26 +523,30 @@ export function Input({
 export function Select({
   value,
   onChange,
-  options,
+  options = [],
   labels,
   disabled,
   className,
+  children,
 }: {
-  value: string;
-  onChange: (v: string) => void;
-  options: ReadonlyArray<string | { label: string; value: string }>;
+  value: string | number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onChange?: ((v: any) => void) | undefined;
+  options?: ReadonlyArray<string | { label: string; value: string }> | undefined;
   labels?: Record<string, string> | undefined;
   disabled?: boolean | undefined;
   className?: string | undefined;
+  children?: ReactNode | undefined;
 }) {
+  const safeOptions = Array.isArray(options) ? options : [];
   return (
     <select
       value={value ?? ""}
       disabled={disabled}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(e) => invokeChangeHandler(onChange, e)}
       className={cn(controlCls, className)}
     >
-      {options.map((o) => {
+      {safeOptions.map((o) => {
         const optValue = typeof o === "string" ? o : o.value;
         const optLabel = typeof o === "string" ? (labels?.[o] ?? o) : o.label;
         return (
@@ -527,6 +555,7 @@ export function Select({
           </option>
         );
       })}
+      {children}
     </select>
   );
 }
@@ -574,19 +603,22 @@ export function Textarea({
   onChange,
   placeholder,
   rows = 3,
+  className,
 }: {
   value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  rows?: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onChange?: ((v: any) => void) | undefined;
+  placeholder?: string | undefined;
+  rows?: number | undefined;
+  className?: string | undefined;
 }) {
   return (
     <textarea
       rows={rows}
       value={value ?? ""}
       placeholder={placeholder ?? ""}
-      onChange={(e) => onChange(e.target.value)}
-      className={controlCls}
+      onChange={(e) => invokeChangeHandler(onChange, e)}
+      className={cn(controlCls, className)}
     />
   );
 }
@@ -713,13 +745,14 @@ export function FilterSelect({
   label,
   value,
   onChange,
-  options,
+  options = [],
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
-  options: string[];
+  options?: string[] | undefined;
 }) {
+  const safeOptions = Array.isArray(options) ? options : [];
   return (
     <select
       aria-label={label}
@@ -728,7 +761,7 @@ export function FilterSelect({
       className="rounded bg-ink-850 px-2.5 py-1.5 font-mono text-[10px] uppercase tracking-widest text-ink-200 ring-1 ring-ink-700 focus:outline-none focus:ring-court-500/60"
     >
       <option value="">{label}: ALL</option>
-      {options.map((o) => (
+      {safeOptions.map((o) => (
         <option key={o} value={o} className="bg-ink-900">
           {o}
         </option>

@@ -34,8 +34,40 @@ let sentryInitialized = false;
 let lastCapturedSignature = "";
 let lastCapturedTimestamp = 0;
 
+export function cleanupStaleServiceWorkersInPreview(): void {
+  if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+  try {
+    const host = window.location.hostname || "";
+    const isPreviewOrDev =
+      import.meta.env.DEV ||
+      host.includes("run.app") ||
+      host === "localhost" ||
+      host === "127.0.0.1";
+    if (!isPreviewOrDev) return;
+
+    navigator.serviceWorker
+      .getRegistrations()
+      .then((regs) => {
+        for (const reg of regs) {
+          try {
+            reg.unregister().catch(() => false);
+          } catch {
+            /* Ignore individual unregister errors */
+          }
+        }
+      })
+      .catch(() => {
+        /* Ignore getRegistrations errors */
+      });
+  } catch {
+    /* Fail-safe */
+  }
+}
+
 export function initSentryMonitoring(): void {
   if (typeof window === "undefined") return;
+
+  cleanupStaleServiceWorkersInPreview();
 
   if (!Array.isArray(window.__APP_DIAGNOSTICS__)) {
     window.__APP_DIAGNOSTICS__ = [];
@@ -47,6 +79,11 @@ export function initSentryMonitoring(): void {
   try {
     Sentry.init({
       dsn: import.meta.env.VITE_SENTRY_DSN || DEFAULT_SENTRY_DSN,
+      ignoreErrors: [
+        /Failed to update a ServiceWorker/i,
+        /Failed to register a ServiceWorker/i,
+        /The script has an unsupported MIME type \('text\/html'\)/i,
+      ],
       integrations: [
         Sentry.browserTracingIntegration(),
         Sentry.replayIntegration({

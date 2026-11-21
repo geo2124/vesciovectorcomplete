@@ -495,12 +495,22 @@ export type Branch = {
   gymCapacity?: number | undefined;
   gymEquipmentNotes?: string | undefined;
   gymDefaultMonthlyFee?: number | undefined;
+  gymPackages?: GymPackageConfig[] | undefined;
+  gymCoaches?: GymCoachProfile[] | undefined;
+  gymBookings?: GymScheduleSlot[] | undefined;
   physioRoomsCount?: number | undefined;
   leadPhysiotherapist?: string | undefined;
   physioClinicStatus?: "Open" | "By Appointment" | "Closed" | undefined;
+  physioPractitioners?: PhysioPractitioner[] | undefined;
+  physioRooms?: PhysioRoom[] | undefined;
+  physioPackages?: PhysioPackageConfig[] | undefined;
+  physioAppointments?: PhysioAppointment[] | undefined;
   posRegisterName?: string | undefined;
   posStartingFloat?: number | undefined;
   posStatus?: "Open" | "Closed" | undefined;
+  posInventoryLogs?: PosInventoryLog[] | undefined;
+  posShifts?: PosRegisterShift[] | undefined;
+  posHeldOrders?: PosHeldOrder[] | undefined;
 };
 
 export const branches: Branch[] = [];
@@ -959,16 +969,225 @@ export type GymWorkoutLog = {
   notes?: string | undefined;
 };
 
-export type GymMember = {
+export type GymProgressMetricEntry = {
   id: string;
-  memberName: string;
-  memberType: "Academy Player" | "External Member";
-  linkedPlayerId?: string | undefined;
+  date: string;
+  weightKg?: number | undefined;
+  bodyFatPct?: number | undefined;
+  muscleMassKg?: number | undefined;
+  benchPress1RM?: number | undefined;
+  backSquat1RM?: number | undefined;
+  deadlift1RM?: number | undefined;
+  verticalJumpCm?: number | undefined;
+  recordedBy?: string | undefined;
+  notes?: string | undefined;
+};
+
+export type GymCheckInEntry = {
+  id: string;
+  date: string;
+  time: string;
+  branch?: string | undefined;
+  slotId?: string | undefined;
+  slotTitle?: string | undefined;
+  deductionType?:
+    "Membership" | "Client Session Pack" | "Coach Session Pool" | "Day Pass" | undefined;
+  coachId?: string | undefined;
+  coachName?: string | undefined;
+  privateClientName?: string | undefined;
+  sessionsRemainingAfter?: number | undefined;
+  note?: string | undefined;
+};
+
+export type GymPackageCategory =
+  "Monthly" | "Quarterly" | "Annual" | "Session Pack" | "Coach PT Pack" | "Day Pass";
+
+export type GymPackageConfig = {
+  id: string;
+  name: string;
+  category: GymPackageCategory;
+  billingModel: "Unlimited Duration" | "Session-Based";
+  price: number;
+  durationDays: number;
+  sessionsIncluded?: number | undefined;
+  branchAccess: "Single Branch" | "All Branches";
+  branch?: string | undefined;
+  forCoachClientPool?: boolean | undefined;
+  description?: string | undefined;
+  active: boolean;
+};
+
+export const DEFAULT_GYM_PACKAGES: GymPackageConfig[] = [
+  {
+    id: "gym-pkg-monthly",
+    name: "Monthly Unlimited Gym",
+    category: "Monthly",
+    billingModel: "Unlimited Duration",
+    price: 60,
+    durationDays: 30,
+    branchAccess: "Single Branch",
+    description: "Unlimited gym floor & strength zone access for 30 days.",
+    active: true,
+  },
+  {
+    id: "gym-pkg-quarterly",
+    name: "Quarterly Performance Membership (90 Days)",
+    category: "Quarterly",
+    billingModel: "Unlimited Duration",
+    price: 155,
+    durationDays: 90,
+    branchAccess: "All Branches",
+    description: "3-month full strength floor access across all Nexus branches.",
+    active: true,
+  },
+  {
+    id: "gym-pkg-annual",
+    name: "Annual Elite Gym Pass (365 Days)",
+    category: "Annual",
+    billingModel: "Unlimited Duration",
+    price: 540,
+    durationDays: 365,
+    branchAccess: "All Branches",
+    description: "Year-round unlimited access across all branches + priority class booking.",
+    active: true,
+  },
+  {
+    id: "gym-pkg-10pt",
+    name: "10-Session S&C / PT Pack",
+    category: "Session Pack",
+    billingModel: "Session-Based",
+    price: 180,
+    durationDays: 60,
+    sessionsIncluded: 10,
+    branchAccess: "Single Branch",
+    description: "10 personal training or guided strength sessions valid for 60 days.",
+    active: true,
+  },
+  {
+    id: "gym-pkg-20pt",
+    name: "20-Session Pro PT Pack",
+    category: "Session Pack",
+    billingModel: "Session-Based",
+    price: 320,
+    durationDays: 90,
+    sessionsIncluded: 20,
+    branchAccess: "All Branches",
+    description: "20 personal training sessions valid for 90 days across all branches.",
+    active: true,
+  },
+  {
+    id: "gym-pkg-coach-pool-15",
+    name: "Coach-as-Client 15-Session Facility Pool",
+    category: "Coach PT Pack",
+    billingModel: "Session-Based",
+    price: 210,
+    durationDays: 90,
+    sessionsIncluded: 15,
+    branchAccess: "All Branches",
+    forCoachClientPool: true,
+    description:
+      "Purchased by a Coach operating as a Client to deduct sessions when training private clients at the facility.",
+    active: true,
+  },
+  {
+    id: "gym-pkg-daypass",
+    name: "Walk-In Day Pass (1 Session)",
+    category: "Day Pass",
+    billingModel: "Session-Based",
+    price: 15,
+    durationDays: 1,
+    sessionsIncluded: 1,
+    branchAccess: "Single Branch",
+    description: "Single-day walk-in gym floor & strength pass.",
+    active: true,
+  },
+];
+
+export type GymCoachProfile = {
+  id: string;
+  name: string;
   phone: string;
   email?: string | undefined;
   branch: string;
+  specialty: string;
+  certifications?: string | undefined;
+  status: "Active" | "On Leave" | "Inactive";
+  hourlyPtRate?: number | undefined;
+  // Coach-as-Client System
+  isClientEnabled: boolean;
+  linkedClientMemberId?: string | undefined;
+  activePackageId?: string | undefined;
+  activePackageName?: string | undefined;
+  sessionsRemaining: number;
+  totalSessionsPurchased: number;
+  packageStartDate?: string | undefined;
+  packageExpiryDate?: string | undefined;
+  branchAccess?: "Single Branch" | "All Branches" | undefined;
+  totalPrivateClientsTrained: number;
+  privateClientsList?: string[] | undefined;
+  checkInHistory?: GymCheckInEntry[] | undefined;
+  notes?: string | undefined;
+  createdAt: string;
+};
+
+export type GymScheduleSlotType =
+  | "Gym Floor Slot"
+  | "Personal Training (PT)"
+  | "Group Strength Class"
+  | "Coach-as-Client Private PT";
+
+export type GymScheduleSlot = {
+  id: string;
+  branch: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  slotType: GymScheduleSlotType;
+  title: string;
+  coachId?: string | undefined;
+  coachName?: string | undefined;
+  clientMemberId?: string | undefined;
+  clientName?: string | undefined;
+  privateClientName?: string | undefined;
+  maxCapacity: number;
+  attendeeIds?: string[] | undefined;
+  attendeeNames?: string[] | undefined;
+  deductionMode: "Client Package" | "Coach Session Pool";
+  status: "Booked" | "Checked In" | "Completed" | "Cancelled";
+  checkedInAt?: string | undefined;
+  notes?: string | undefined;
+  createdAt: string;
+};
+
+export type GymMember = {
+  id: string;
+  memberName: string;
+  memberType: "Academy Player" | "External Member" | "Coach-as-Client";
+  linkedPlayerId?: string | undefined;
+  linkedGymCoachId?: string | undefined;
+  phone: string;
+  email?: string | undefined;
+  emergencyContactName?: string | undefined;
+  emergencyContactPhone?: string | undefined;
+  emergencyContactRelation?: string | undefined;
+  fitnessGoals?: string | undefined;
+  medicalNotes?: string | undefined;
+  assignedCoachId?: string | undefined;
+  assignedCoachName?: string | undefined;
+  branch: string;
+  branchAccess?: "Single Branch" | "All Branches" | undefined;
+  packageId?: string | undefined;
   packageName: string;
-  packageType: "Monthly Unlimited" | "10-Session S&C Pack" | "Athlete Pro S&C" | "Walk-In Day Pass";
+  packageType:
+    | "Monthly Unlimited"
+    | "Quarterly Membership"
+    | "Annual Membership"
+    | "10-Session S&C Pack"
+    | "20-Session PT Pack"
+    | "Coach PT Session Pool"
+    | "Athlete Pro S&C"
+    | "Walk-In Day Pass"
+    | string;
   monthlyFee: number;
   sessionsRemaining?: number | undefined;
   totalSessionsIncluded?: number | undefined;
@@ -978,8 +1197,13 @@ export type GymMember = {
   balance: number;
   lastCheckInDate?: string | undefined;
   totalCheckIns: number;
-  checkInHistory?: { id: string; date: string; time: string; note?: string }[] | undefined;
+  checkInHistory?: GymCheckInEntry[] | undefined;
   workoutLogs: GymWorkoutLog[];
+  progressMetrics?: GymProgressMetricEntry[] | undefined;
+  followUpStatus?:
+    "None" | "Pending Follow-Up" | "Contacted" | "Renewal Offered" | "Renewed" | undefined;
+  followUpNotes?: string | undefined;
+  lastFollowUpDate?: string | undefined;
   createdAt: string;
   updatedAt?: string | undefined;
 };
@@ -988,22 +1212,211 @@ export const gymMembers: GymMember[] = [];
 
 export type PlayerMedicalClearanceStatus = "Fit" | "Limited" | "Injured";
 
-export type PhysioTreatmentSession = {
+export type PhysioExercisePrescription = {
   id: string;
+  exerciseName: string;
+  setsRepsTempo: string;
+  frequency: string;
+  targetGoal?: string | undefined;
+  precautions?: string | undefined;
+};
+
+export type PhysioAppointmentStatus =
+  "Scheduled" | "Checked-In" | "In-Treatment" | "Completed" | "No-Show" | "Cancelled";
+
+export type PhysioPractitioner = {
+  id: string;
+  name: string;
+  title: string; // e.g., "Senior Sports Physiotherapist (DPT)", "Orthopedic & Sports Physician"
+  specialty: string;
+  phone: string;
+  email?: string | undefined;
+  branch: string;
+  workingDays: string[]; // e.g., ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+  workingHoursStart: string; // e.g., "09:00"
+  workingHoursEnd: string; // e.g., "18:00"
+  defaultSessionFee: number;
+  payoutModel: "Percentage Commission" | "Fixed Per Session";
+  commissionPct: number; // e.g., 40 (%)
+  fixedPayoutPerSession?: number | undefined;
+  status: "Active" | "On Leave" | "Inactive";
+  licenseNumber?: string | undefined;
+  notes?: string | undefined;
+  createdAt: string;
+};
+
+export type PhysioRoom = {
+  id: string;
+  name: string;
+  roomType:
+    | "Private Assessment Room"
+    | "Manual Therapy Cubicle"
+    | "Electrotherapy & Modalities Bay"
+    | "Rehab & Biomechanics Zone";
+  branch: string;
+  equipment: string;
+  status: "Available" | "Maintenance";
+  notes?: string | undefined;
+};
+
+export type PhysioPackageConfig = {
+  id: string;
+  name: string;
+  category:
+    | "Initial Assessment"
+    | "Single Treatment"
+    | "5-Session Rehab Pack"
+    | "10-Session Post-Op Pack"
+    | "Athlete RTP Protocol";
+  sessionsIncluded: number;
+  price: number;
+  validityDays: number;
+  description?: string | undefined;
+  active: boolean;
+};
+
+export const DEFAULT_PHYSIO_PACKAGES: PhysioPackageConfig[] = [
+  {
+    id: "physio-pkg-eval",
+    name: "Comprehensive Initial Clinical Assessment",
+    category: "Initial Assessment",
+    sessionsIncluded: 1,
+    price: 65,
+    validityDays: 30,
+    description:
+      "60-min orthopedic & biomechanical evaluation, diagnosis, SOAP plan & exercise prescription.",
+    active: true,
+  },
+  {
+    id: "physio-pkg-single",
+    name: "Single Physiotherapy Treatment Session",
+    category: "Single Treatment",
+    sessionsIncluded: 1,
+    price: 50,
+    validityDays: 30,
+    description: "45-min manual therapy, dry needling/electrotherapy & guided corrective loading.",
+    active: true,
+  },
+  {
+    id: "physio-pkg-5pack",
+    name: "5-Session Acute Injury Rehab Package",
+    category: "5-Session Rehab Pack",
+    sessionsIncluded: 5,
+    price: 225,
+    validityDays: 60,
+    description: "5 progressive physiotherapy & rehab sessions ($45/session) valid for 60 days.",
+    active: true,
+  },
+  {
+    id: "physio-pkg-10pack",
+    name: "10-Session Post-Op & Return-to-Play Package",
+    category: "10-Session Post-Op Pack",
+    sessionsIncluded: 10,
+    price: 420,
+    validityDays: 120,
+    description:
+      "10 comprehensive clinical rehab & biomechanical RTP sessions ($42/session) valid for 120 days.",
+    active: true,
+  },
+  {
+    id: "physio-pkg-rtp",
+    name: "Elite Athlete 8-Session RTP & Force-Plate Protocol",
+    category: "Athlete RTP Protocol",
+    sessionsIncluded: 8,
+    price: 360,
+    validityDays: 90,
+    description: "Full 5-stage Return-to-Play progression & sport-specific clearance protocol.",
+    active: true,
+  },
+];
+
+export type PhysioAppointment = {
+  id: string;
+  branch: string;
+  patientRecordId: string;
+  patientName: string;
+  patientPhone?: string | undefined;
+  practitionerId: string;
+  practitionerName: string;
+  roomId: string;
+  roomName: string;
   date: string;
-  time: string;
-  therapistName: string;
+  startTime: string;
+  endTime: string;
+  appointmentType:
+    "Initial Assessment" | "Follow-Up Treatment" | "Rehab Load Session" | "RTP Clearance Test";
   modality:
     | "Manual Therapy & Mobilization"
     | "Dry Needling / Electrotherapy"
     | "Cryotherapy & Compression"
     | "Rehab Gym Load Protocol"
-    | "Return-to-Play Biomechanical Test";
-  soapNotes: string;
-  painScore: number; // 0–10
+    | "Return-to-Play Biomechanical Test"
+    | string;
+  status: PhysioAppointmentStatus;
   fee: number;
-  paymentStatus: "Paid" | "Pending" | "Academy Covered" | "Charged to Account";
-  status: "Scheduled" | "Completed" | "Cancelled";
+  paymentStatus:
+    | "Paid"
+    | "Pending"
+    | "Package Deducted"
+    | "Insurance Covered"
+    | "Academy Covered"
+    | "Charged to Account";
+  invoiceNumber?: string | undefined;
+  practitionerPayoutAmount?: number | undefined;
+  // Structured SOAP & Rehab Exercise Prescription
+  soapSubjective?: string | undefined;
+  soapObjective?: string | undefined;
+  soapAssessment?: string | undefined;
+  soapPlan?: string | undefined;
+  exercisePrescription?: string | undefined;
+  painScore?: number | undefined;
+  notes?: string | undefined;
+  createdAt: string;
+};
+
+export type PhysioTreatmentSession = {
+  id: string;
+  appointmentId?: string | undefined;
+  date: string;
+  time: string;
+  endTime?: string | undefined;
+  therapistName: string;
+  practitionerId?: string | undefined;
+  roomId?: string | undefined;
+  roomName?: string | undefined;
+  sessionType?:
+    | "Initial Assessment"
+    | "Follow-Up Treatment"
+    | "Rehab Load Session"
+    | "RTP Clearance Test"
+    | undefined;
+  modality:
+    | "Manual Therapy & Mobilization"
+    | "Dry Needling / Electrotherapy"
+    | "Cryotherapy & Compression"
+    | "Rehab Gym Load Protocol"
+    | "Return-to-Play Biomechanical Test"
+    | string;
+  soapNotes: string;
+  soapSubjective?: string | undefined;
+  soapObjective?: string | undefined;
+  soapAssessment?: string | undefined;
+  soapPlan?: string | undefined;
+  exercisePrescription?: string | undefined;
+  rehabExercises?: PhysioExercisePrescription[] | undefined;
+  painScore: number; // 0–10
+  romProgressNote?: string | undefined;
+  fee: number;
+  practitionerPayout?: number | undefined;
+  invoiceNumber?: string | undefined;
+  paymentStatus:
+    | "Paid"
+    | "Pending"
+    | "Package Deducted"
+    | "Insurance Covered"
+    | "Academy Covered"
+    | "Charged to Account";
+  status: PhysioAppointmentStatus;
 };
 
 export type PhysioRecord = {
@@ -1013,7 +1426,39 @@ export type PhysioRecord = {
   linkedPlayerId?: string | undefined;
   team?: string | undefined;
   phone?: string | undefined;
+  email?: string | undefined;
+  dateOfBirth?: string | undefined;
+  age?: number | undefined;
+  gender?: "Male" | "Female" | "Other" | undefined;
+  address?: string | undefined;
+  // Emergency Contact
+  emergencyContactName?: string | undefined;
+  emergencyContactPhone?: string | undefined;
+  emergencyContactRelation?: string | undefined;
+  // Medical History & Contraindications
+  medicalHistory?: string | undefined;
+  allergiesContraindications?: string | undefined;
+  surgicalHistory?: string | undefined;
+  currentMedications?: string | undefined;
+  referringDoctor?: string | undefined;
+  referringClinic?: string | undefined;
+  // Insurance & Billing Profile
+  billingType?: "Self-Pay" | "Rehab Package" | "Insurance" | "Academy Covered" | undefined;
+  insuranceProvider?: string | undefined;
+  insurancePolicyNumber?: string | undefined;
+  insuranceCoveragePct?: number | undefined;
+  activePackageId?: string | undefined;
+  activePackageName?: string | undefined;
+  packageSessionsRemaining?: number | undefined;
+  packageSessionsTotal?: number | undefined;
+  totalBilled?: number | undefined;
+  totalPaid?: number | undefined;
+  balanceDue?: number | undefined;
+  // Clinical Profile & Status
   branch: string;
+  caseStatus?: "Active Treatment" | "Maintenance / Rehab" | "Discharged" | "On Hold" | undefined;
+  dischargeDate?: string | undefined;
+  dischargeSummary?: string | undefined;
   medicalStatus: PlayerMedicalClearanceStatus; // "Fit" | "Limited" | "Injured"
   injuryArea:
     | "Ankle / Foot"
@@ -1024,13 +1469,16 @@ export type PhysioRecord = {
     | "Wrist / Hand"
     | "Concussion / General";
   diagnosis: string;
+  primaryComplaint?: string | undefined;
   mechanism?: string | undefined;
   severity: "Mild (Grade 1)" | "Moderate (Grade 2)" | "Severe (Grade 3)";
   intakeDate: string;
   estimatedReturnDate?: string | undefined;
+  assignedPractitionerId?: string | undefined;
   therapistName: string;
   rtpStage: 1 | 2 | 3 | 4 | 5;
   restrictions: string;
+  rehabExercises?: PhysioExercisePrescription[] | undefined;
   treatmentSessions: PhysioTreatmentSession[];
   createdAt: string;
   updatedAt: string;
@@ -1041,6 +1489,8 @@ export const physioRecords: PhysioRecord[] = [];
 export type PosItemCategory =
   | "Hydration & Drinks"
   | "Snacks & Nutrition"
+  | "Supplements"
+  | "Cafeteria & Coffee"
   | "Uniforms & Merch"
   | "Court Walk-In & Passes"
   | "Recovery & Tape";
@@ -1048,10 +1498,16 @@ export type PosItemCategory =
 export type PosCatalogItem = {
   id: string;
   name: string;
-  category: PosItemCategory;
+  nameAr?: string | undefined;
+  category: PosItemCategory | string;
+  costPrice?: number | undefined;
   price: number;
+  taxRatePct?: number | undefined;
   stock: number;
+  lowStockThreshold?: number | undefined;
   sku?: string | undefined;
+  barcode?: string | undefined;
+  imageIcon?: string | undefined;
   linkedStockId?: string | undefined;
   branch?: string | undefined;
   active: boolean;
@@ -1060,9 +1516,14 @@ export type PosCatalogItem = {
 export type PosCartLineItem = {
   itemId: string;
   name: string;
+  nameAr?: string | undefined;
   category: PosItemCategory | string;
   quantity: number;
   unitPrice: number;
+  costPrice?: number | undefined;
+  itemDiscount?: number | undefined;
+  taxRatePct?: number | undefined;
+  taxAmount?: number | undefined;
   subtotal: number;
   linkedStockId?: string | undefined;
 };
@@ -1073,6 +1534,7 @@ export type PosTransaction = {
   date: string;
   time: string;
   branch: string;
+  shiftId?: string | undefined;
   cashierName: string;
   customerType: "Walk-In" | "Academy Player" | "Gym Member";
   customerName: string;
@@ -1081,129 +1543,324 @@ export type PosTransaction = {
   items: PosCartLineItem[];
   subtotal: number;
   discount: number;
+  taxTotal?: number | undefined;
   total: number;
-  paymentMethod: "Cash" | "Card" | "Charge to Account";
+  paymentMethod: "Cash" | "Card" | "Charge to Account" | "Split Payment";
+  splitCashAmount?: number | undefined;
+  splitCardAmount?: number | undefined;
+  splitAccountAmount?: number | undefined;
+  amountTendered?: number | undefined;
+  changeDue?: number | undefined;
   status: "Completed" | "Refunded";
   notes?: string | undefined;
   createdAt: string;
+};
+
+export type PosInventoryLog = {
+  id: string;
+  date: string;
+  time: string;
+  branch: string;
+  itemId: string;
+  itemName: string;
+  itemNameAr?: string | undefined;
+  adjustmentType:
+    "Stock-In / Restock" | "Waste / Spoilage" | "Manual Correction" | "Sale Deduction";
+  quantityDelta: number;
+  previousStock: number;
+  newStock: number;
+  unitCost?: number | undefined;
+  totalCostImpact?: number | undefined;
+  reasonOrSupplier?: string | undefined;
+  recordedBy: string;
+};
+
+export type PosRegisterShift = {
+  id: string;
+  branch: string;
+  registerName: string;
+  cashierName: string;
+  openedAt: string;
+  closedAt?: string | undefined;
+  status: "Open" | "Closed";
+  openingFloat: number;
+  cashSalesTotal: number;
+  cardSalesTotal: number;
+  accountChargeTotal: number;
+  expectedDrawerCash: number;
+  actualCashCounted?: number | undefined;
+  variance?: number | undefined;
+  transactionsCount: number;
+  notes?: string | undefined;
+};
+
+export type PosHeldOrder = {
+  id: string;
+  branch: string;
+  label: string;
+  customerType: "Walk-In" | "Academy Player" | "Gym Member";
+  customerName: string;
+  linkedPlayerId?: string | undefined;
+  linkedGymMemberId?: string | undefined;
+  items: PosCartLineItem[];
+  cartDiscount: number;
+  heldAt: string;
 };
 
 export const DEFAULT_POS_CATALOG: PosCatalogItem[] = [
   {
     id: "pos-water-500",
     name: "Mineral Water (500ml)",
+    nameAr: "مياه معدنية (500 مل)",
     category: "Hydration & Drinks",
+    costPrice: 0.5,
     price: 1.5,
+    taxRatePct: 0,
     stock: 120,
+    lowStockThreshold: 20,
     sku: "HYD-001",
+    barcode: "628100000101",
+    imageIcon: "💧",
     active: true,
   },
   {
     id: "pos-iso-blue",
     name: "Isotonic Sports Drink (Blue Berry)",
+    nameAr: "مشروب رياضي أيزوتونيك (توت أزرق)",
     category: "Hydration & Drinks",
+    costPrice: 1.4,
     price: 3.5,
+    taxRatePct: 0,
     stock: 64,
+    lowStockThreshold: 12,
     sku: "HYD-002",
+    barcode: "628100000102",
+    imageIcon: "🥤",
     active: true,
   },
   {
     id: "pos-electrolyte-citrus",
     name: "Zero-Sugar Electrolyte Hydration",
+    nameAr: "مشروب إلكترولايت خالٍ من السكر",
     category: "Hydration & Drinks",
+    costPrice: 1.6,
     price: 4.0,
+    taxRatePct: 0,
     stock: 48,
+    lowStockThreshold: 10,
     sku: "HYD-003",
+    barcode: "628100000103",
+    imageIcon: "🍋",
+    active: true,
+  },
+  {
+    id: "pos-espresso-dbl",
+    name: "Double Espresso Shot",
+    nameAr: "قهوة إسبريسو دبل",
+    category: "Cafeteria & Coffee",
+    costPrice: 0.8,
+    price: 3.0,
+    taxRatePct: 11,
+    stock: 200,
+    lowStockThreshold: 25,
+    sku: "CAF-001",
+    barcode: "628100000201",
+    imageIcon: "☕",
+    active: true,
+  },
+  {
+    id: "pos-iced-latte",
+    name: "Iced Spanish Oat Latte",
+    nameAr: "سبانيش لاتيه مثلج بالشوفان",
+    category: "Cafeteria & Coffee",
+    costPrice: 1.5,
+    price: 4.5,
+    taxRatePct: 11,
+    stock: 90,
+    lowStockThreshold: 15,
+    sku: "CAF-002",
+    barcode: "628100000202",
+    imageIcon: "🧋",
+    active: true,
+  },
+  {
+    id: "pos-chicken-wrap",
+    name: "Grilled Chicken & Avocado Protein Wrap",
+    nameAr: "راب دجاج مشوي وأفوكادو عالي البروتين",
+    category: "Cafeteria & Coffee",
+    costPrice: 3.2,
+    price: 7.5,
+    taxRatePct: 11,
+    stock: 24,
+    lowStockThreshold: 6,
+    sku: "CAF-003",
+    barcode: "628100000203",
+    imageIcon: "🌯",
     active: true,
   },
   {
     id: "pos-whey-shake",
-    name: "Post-Workout Whey Recovery Shake",
-    category: "Hydration & Drinks",
+    name: "Post-Workout Whey Isolate Shake",
+    nameAr: "مخفوق واي بروتين بعد التمرين",
+    category: "Supplements",
+    costPrice: 2.5,
     price: 6.5,
+    taxRatePct: 0,
     stock: 35,
-    sku: "HYD-004",
+    lowStockThreshold: 8,
+    sku: "SUP-001",
+    barcode: "628100000301",
+    imageIcon: "💪",
+    active: true,
+  },
+  {
+    id: "pos-creatine-tub",
+    name: "Micronized Creatine Monohydrate (300g)",
+    nameAr: "كرياتين مونوهيدرات نقي (300 غرام)",
+    category: "Supplements",
+    costPrice: 16.0,
+    price: 32.0,
+    taxRatePct: 0,
+    stock: 18,
+    lowStockThreshold: 5,
+    sku: "SUP-002",
+    barcode: "628100000302",
+    imageIcon: "⚡",
     active: true,
   },
   {
     id: "pos-protein-bar",
     name: "High-Protein Peanut Crunch Bar",
+    nameAr: "لوح بروتين بالفول السوداني المقرمش",
     category: "Snacks & Nutrition",
+    costPrice: 1.4,
     price: 3.5,
+    taxRatePct: 0,
     stock: 50,
+    lowStockThreshold: 10,
     sku: "SNK-001",
+    barcode: "628100000401",
+    imageIcon: "🍫",
     active: true,
   },
   {
     id: "pos-energy-oat",
     name: "Pre-Game Energy Oat & Honey Flapjack",
+    nameAr: "لوح الشوفان والعسل للطاقة قبل المباراة",
     category: "Snacks & Nutrition",
+    costPrice: 0.9,
     price: 2.5,
+    taxRatePct: 0,
     stock: 40,
+    lowStockThreshold: 10,
     sku: "SNK-002",
+    barcode: "628100000402",
+    imageIcon: "🍯",
     active: true,
   },
   {
     id: "pos-court-walkin-hr",
     name: "Court Walk-In Open Shootaround (1 Hr)",
+    nameAr: "تذكرة دخول ملعب مفتوح (ساعة واحدة)",
     category: "Court Walk-In & Passes",
+    costPrice: 0,
     price: 15.0,
+    taxRatePct: 0,
     stock: 999,
+    lowStockThreshold: 0,
     sku: "WLK-001",
+    barcode: "628100000501",
+    imageIcon: "🏀",
     active: true,
   },
   {
     id: "pos-gym-day-pass",
     name: "S&C Gym Walk-In Day Pass",
+    nameAr: "تذكرة دخول يومية لصالة القوة واللياقة",
     category: "Court Walk-In & Passes",
+    costPrice: 0,
     price: 12.0,
+    taxRatePct: 0,
     stock: 999,
+    lowStockThreshold: 0,
     sku: "WLK-002",
+    barcode: "628100000502",
+    imageIcon: "🏋️",
     active: true,
   },
   {
     id: "pos-jersey-kit",
     name: "Vescio Vector Official Reversible Kit",
+    nameAr: "طقم فيسيو فيكتور الرسمي ذو الوجهين",
     category: "Uniforms & Merch",
+    costPrice: 20.0,
     price: 45.0,
+    taxRatePct: 11,
     stock: 28,
+    lowStockThreshold: 6,
     sku: "UNI-001",
+    barcode: "628100000601",
+    imageIcon: "🎽",
     active: true,
   },
   {
     id: "pos-shooting-shirt",
     name: "Academy Warmup Shooting Shirt",
+    nameAr: "قميص إحماء الأكاديمية الرياضي",
     category: "Uniforms & Merch",
+    costPrice: 12.0,
     price: 28.0,
+    taxRatePct: 11,
     stock: 32,
+    lowStockThreshold: 6,
     sku: "UNI-002",
+    barcode: "628100000602",
+    imageIcon: "👕",
     active: true,
   },
   {
     id: "pos-grip-socks",
     name: "Pro Court Grip Crew Socks",
+    nameAr: "جوارب رياضية احترافية مانعة للانزلاق",
     category: "Uniforms & Merch",
+    costPrice: 4.5,
     price: 12.0,
+    taxRatePct: 11,
     stock: 55,
+    lowStockThreshold: 10,
     sku: "UNI-003",
+    barcode: "628100000603",
+    imageIcon: "🧦",
     active: true,
   },
   {
     id: "pos-kt-tape",
     name: "Kinesiology Athletic Tape Roll",
+    nameAr: "لفافة شريط لاصق رياضي طبي (كينيسيولوجي)",
     category: "Recovery & Tape",
+    costPrice: 5.5,
     price: 14.0,
+    taxRatePct: 0,
     stock: 25,
+    lowStockThreshold: 5,
     sku: "REC-001",
+    barcode: "628100000701",
+    imageIcon: "🩹",
     active: true,
   },
   {
     id: "pos-ankle-wrap",
     name: "Instant Cold Compression Pack",
+    nameAr: "كمادة تبريد فورية للإصابات الرياضية",
     category: "Recovery & Tape",
+    costPrice: 3.0,
     price: 8.0,
+    taxRatePct: 0,
     stock: 30,
+    lowStockThreshold: 6,
     sku: "REC-002",
+    barcode: "628100000702",
+    imageIcon: "🧊",
     active: true,
   },
 ];

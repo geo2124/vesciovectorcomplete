@@ -33,6 +33,7 @@ import {
 } from "@/components/kit";
 import {
   COURT_ALLOCATION_OPTIONS,
+  atomicBookCourtReservationTransaction,
   calculateSessionDurationHours,
   checkCourtScheduleConflict,
   todayISO,
@@ -222,12 +223,123 @@ function roundCurrency(val: number): number {
   return Math.round((Number(val) || 0) * 100) / 100;
 }
 
+export interface CourtReservationPricingInput {
+  startTime: string;
+  endTime: string;
+  rateType: CourtRateType;
+  unitRate: number;
+  extraPlayerRate?: number;
+  playerCount?: number | string;
+  freePass?: boolean;
+  discountPercent?: number | string;
+  discountFixedAmount?: number | string;
+}
+
+export interface CourtReservationPricingResult {
+  isTimeValid: boolean;
+  durationHours: number;
+  unitRate: number;
+  extraPlayerRate: number;
+  playerCount: number;
+  baseCalculatedAmount: number;
+  discountPercent: number;
+  discountFixedAmount: number;
+  pctDeduction: number;
+  finalPayable: number;
+  effectiveHourly: number;
+}
+
+export function calculateCourtReservationPricing(
+  input: CourtReservationPricingInput,
+): CourtReservationPricingResult {
+  const startMin = timeToMinutes(input.startTime);
+  const endMin = timeToMinutes(input.endTime);
+  const validDurationMinutes = Math.max(0, endMin - startMin);
+  const durationHours =
+    validDurationMinutes > 0
+      ? Math.round((validDurationMinutes / 60) * 100) / 100
+      : calculateSessionDurationHours(input.startTime, input.endTime);
+
+  const unitRate = Number(input.unitRate) || 0;
+  const extraPlayerRate = Number(input.extraPlayerRate) || 0;
+  const pCount = Math.max(1, Math.floor(Number(input.playerCount) || 1));
+
+  const baseCalculatedAmount =
+    input.rateType === "Private Rate"
+      ? roundCurrency(unitRate + Math.max(0, pCount - 1) * extraPlayerRate)
+      : roundCurrency(unitRate * durationHours);
+
+  const pct = Math.max(0, Math.min(100, Number(input.discountPercent) || 0));
+  const fixedDisc = Math.max(0, Number(input.discountFixedAmount) || 0);
+  const pctDeduction = roundCurrency(baseCalculatedAmount * (pct / 100));
+  const afterPct = Math.max(0, roundCurrency(baseCalculatedAmount - pctDeduction));
+  const finalPayable = input.freePass ? 0 : Math.max(0, roundCurrency(afterPct - fixedDisc));
+  const effectiveHourly =
+    durationHours > 0 ? roundCurrency(finalPayable / durationHours) : unitRate;
+
+  return {
+    isTimeValid: endMin > startMin,
+    durationHours,
+    unitRate,
+    extraPlayerRate,
+    playerCount: pCount,
+    baseCalculatedAmount,
+    discountPercent: pct,
+    discountFixedAmount: fixedDisc,
+    pctDeduction,
+    finalPayable,
+    effectiveHourly,
+  };
+}
+
+export function calculateCourtCashInMath(params: {
+  totalAmount: number;
+  alreadyPaidAmount: number;
+  collectAmountInput: number | string;
+  freePass?: boolean;
+  paymentMethod?: CourtReservation["paymentMethod"];
+  hasLinkedPlayer?: boolean;
+}): {
+  confirmedCollectAmount: number;
+  newTotalPaid: number;
+  updatedFinalTotal: number;
+  remainingBalance: number;
+  paymentStatus: CourtReservation["paymentStatus"];
+} {
+  const alreadyPaid = roundCurrency(Number(params.alreadyPaidAmount) || 0);
+  const confirmedCollectAmount = params.freePass
+    ? 0
+    : Math.max(0, roundCurrency(Number(params.collectAmountInput) || 0));
+  const newTotalPaid = roundCurrency(alreadyPaid + confirmedCollectAmount);
+  const baseTotalAmount = roundCurrency(Number(params.totalAmount) || 0);
+  const updatedFinalTotal = params.freePass ? 0 : Math.max(baseTotalAmount, newTotalPaid);
+  const remainingBalance = Math.max(0, roundCurrency(updatedFinalTotal - newTotalPaid));
+
+  const paymentStatus: CourtReservation["paymentStatus"] = params.freePass
+    ? "Free Pass"
+    : params.paymentMethod === "Account Charge" && params.hasLinkedPlayer
+      ? "Charged to Account"
+      : newTotalPaid >= updatedFinalTotal && updatedFinalTotal > 0
+        ? "Paid"
+        : newTotalPaid > 0
+          ? "Partial"
+          : "Pending";
+
+  return {
+    confirmedCollectAmount,
+    newTotalPaid,
+    updatedFinalTotal,
+    remainingBalance,
+    paymentStatus,
+  };
+}
+
 export function NexusCourtReservationsModule({
   branchFilter,
   onChangeBranchFilter,
   externalNewBookingTrigger,
 }: NexusCourtReservationsProps) {
-  const { db, setEntity, patchEntity, deleteEntity } = useDB();
+  const { db, tenantId, setEntity, patchEntity, deleteEntity, runBranchArrayTransaction } = useDB();
   const currentUser = useTenantUser();
 
   const branches = useMemo(() => db.branches || [], [db.branches]);
@@ -412,24 +524,33 @@ export function NexusCourtReservationsModule({
       updatedAt: new Date().toISOString(),
     };
 
-    const targetBranch = await ensureBranchRecord();
-    const updatedCourts = (targetBranch.courts || branchCourts).map((c) => ({
-      ...c,
-      fullCourtHourlyRate: nextRates.fullCourtHourlyRate,
-      halfCourtHourlyRate: nextRates.halfCourtHourlyRate,
-    }));
+    try {
+      const targetBranch = await ensureBranchRecord();
+      await runBranchArrayTransaction(
+        targetBranch.id,
+        (curr) => {
+          const updatedCourts = (curr.courts || branchCourts).map((c) => ({
+            ...c,
+            fullCourtHourlyRate: nextRates.fullCourtHourlyRate,
+            halfCourtHourlyRate: nextRates.halfCourtHourlyRate,
+          }));
+          return {
+            ...curr,
+            rentalRate: nextRates.fullCourtHourlyRate,
+            courts: updatedCourts,
+            nexusRates: nextRates,
+          };
+        },
+        targetBranch,
+      );
 
-    await setEntity("branches", {
-      ...targetBranch,
-      rentalRate: nextRates.fullCourtHourlyRate,
-      courts: updatedCourts,
-      nexusRates: nextRates,
-    });
-
-    setRatesModalOpen(false);
-    toast.success(
-      `Saved ${targetBranch.name} rate structures. Existing confirmed bookings keep their snapshotted fees.`,
-    );
+      setRatesModalOpen(false);
+      toast.success(
+        `Saved ${targetBranch.name} rate structures. Existing confirmed bookings keep their snapshotted fees.`,
+      );
+    } catch {
+      /* Error toast handled by transaction wrapper */
+    }
   };
 
   // =========================================================================
@@ -448,33 +569,47 @@ export function NexusCourtReservationsModule({
       toast.error(`${newOffDayDate} is already marked as an Off Day for ${activeBranchName}.`);
       return;
     }
-    const targetBranch = await ensureBranchRecord();
-    const entry: BranchOffDay = {
-      id: uid("off"),
-      date: newOffDayDate,
-      reason: newOffDayReason.trim() || "Facility Closure / Off Day",
-      createdBy: currentUser?.name || "Admin",
-      createdAt: new Date().toISOString(),
-    };
-    const nextOffDays = [...(targetBranch.offDays || []), entry].sort((a, b) =>
-      a.date.localeCompare(b.date),
-    );
-    await setEntity("branches", {
-      ...targetBranch,
-      offDays: nextOffDays,
-    });
-    setNewOffDayReason("");
-    toast.success(`Marked ${newOffDayDate} as an Off Day for ${targetBranch.name}.`);
+    try {
+      const targetBranch = await ensureBranchRecord();
+      const entry: BranchOffDay = {
+        id: uid("off"),
+        date: newOffDayDate,
+        reason: newOffDayReason.trim() || "Facility Closure / Off Day",
+        createdBy: currentUser?.name || "Admin",
+        createdAt: new Date().toISOString(),
+      };
+      await runBranchArrayTransaction(
+        targetBranch.id,
+        (curr) => ({
+          ...curr,
+          offDays: [...(curr.offDays || []).filter((o) => o.date !== newOffDayDate), entry].sort(
+            (a, b) => a.date.localeCompare(b.date),
+          ),
+        }),
+        targetBranch,
+      );
+      setNewOffDayReason("");
+      toast.success(`Marked ${newOffDayDate} as an Off Day for ${targetBranch.name}.`);
+    } catch {
+      /* Error toast handled by transaction wrapper */
+    }
   };
 
   const handleRemoveOffDay = async (offDayId: string) => {
     if (!activeBranchObj) return;
-    const nextOffDays = (activeBranchObj.offDays || []).filter((o) => o.id !== offDayId);
-    await setEntity("branches", {
-      ...activeBranchObj,
-      offDays: nextOffDays,
-    });
-    toast.success("Removed Off Day closure.");
+    try {
+      await runBranchArrayTransaction(
+        activeBranchObj.id,
+        (curr) => ({
+          ...curr,
+          offDays: (curr.offDays || []).filter((o) => o.id !== offDayId),
+        }),
+        activeBranchObj,
+      );
+      toast.success("Removed Off Day closure.");
+    } catch {
+      /* Error toast handled by transaction wrapper */
+    }
   };
 
   // =========================================================================
@@ -681,14 +816,6 @@ export function NexusCourtReservationsModule({
 
   // Pricing & Snapshot Calculation Preview
   const pricingPreview = useMemo(() => {
-    const startMin = timeToMinutes(bookingForm.startTime);
-    const endMin = timeToMinutes(bookingForm.endTime);
-    const validDurationMinutes = Math.max(0, endMin - startMin);
-    const durationHours =
-      validDurationMinutes > 0
-        ? Math.round((validDurationMinutes / 60) * 100) / 100
-        : calculateSessionDurationHours(bookingForm.startTime, bookingForm.endTime);
-
     const liveSnap = resolveDefaultRateSnapshotForType(
       bookingForm.rateType,
       bookingForm.branch,
@@ -702,37 +829,17 @@ export function NexusCourtReservationsModule({
       ? bookingForm.snapshotExtraPlayerRate
       : liveSnap.extraPlayerRate;
 
-    const pCount = Math.max(1, Math.floor(Number(bookingForm.playerCount) || 1));
-
-    const baseCalculatedAmount =
-      bookingForm.rateType === "Private Rate"
-        ? roundCurrency(unitRate + Math.max(0, pCount - 1) * extraPlayerRate)
-        : roundCurrency(unitRate * durationHours);
-
-    const pct = Math.max(0, Math.min(100, Number(bookingForm.discountPercent) || 0));
-    const fixedDisc = Math.max(0, Number(bookingForm.discountFixedAmount) || 0);
-    const pctDeduction = roundCurrency(baseCalculatedAmount * (pct / 100));
-    const afterPct = Math.max(0, roundCurrency(baseCalculatedAmount - pctDeduction));
-    const finalPayable = bookingForm.freePass
-      ? 0
-      : Math.max(0, roundCurrency(afterPct - fixedDisc));
-
-    const effectiveHourly =
-      durationHours > 0 ? roundCurrency(finalPayable / durationHours) : unitRate;
-
-    return {
-      isTimeValid: endMin > startMin,
-      durationHours,
+    return calculateCourtReservationPricing({
+      startTime: bookingForm.startTime,
+      endTime: bookingForm.endTime,
+      rateType: bookingForm.rateType,
       unitRate,
       extraPlayerRate,
-      playerCount: pCount,
-      baseCalculatedAmount,
-      discountPercent: pct,
-      discountFixedAmount: fixedDisc,
-      pctDeduction,
-      finalPayable,
-      effectiveHourly,
-    };
+      playerCount: bookingForm.playerCount,
+      freePass: bookingForm.freePass,
+      discountPercent: bookingForm.discountPercent,
+      discountFixedAmount: bookingForm.discountFixedAmount,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     bookingForm.startTime,
@@ -872,9 +979,24 @@ export function NexusCourtReservationsModule({
         ...(bookingForm.notes.trim() ? { notes: bookingForm.notes.trim() } : {}),
         updatedAt: nowIso,
       };
-      await setEntity("courtReservations", updated);
-      setBookingModalOpen(false);
-      toast.success(`Updated booking for ${updated.clientName}.`);
+      try {
+        await atomicBookCourtReservationTransaction({
+          tenantId,
+          ...(formBranchObj?.id
+            ? { branchId: formBranchObj.id, fallbackBranch: formBranchObj }
+            : {}),
+          reservationsToSave: [updated],
+          previousReservation: editingReservation,
+          localReservations: reservations,
+          localSessions: sessions,
+        });
+        await setEntity("courtReservations", updated);
+        setBookingModalOpen(false);
+        toast.success(`Updated booking for ${updated.clientName}.`);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Failed to save booking due to conflict.";
+        toast.error(msg);
+      }
       return;
     }
 
@@ -947,11 +1069,25 @@ export function NexusCourtReservationsModule({
         updatedAt: nowIso,
       };
 
-      await setEntity("courtReservations", seedRecord);
-      setBookingModalOpen(false);
-      toast.success(
-        `Activated Continuous weekly booking for ${seedRecord.clientName} (${seedRecord.court} · ${seedRecord.courtAllocation}).`,
-      );
+      try {
+        await atomicBookCourtReservationTransaction({
+          tenantId,
+          ...(formBranchObj?.id
+            ? { branchId: formBranchObj.id, fallbackBranch: formBranchObj }
+            : {}),
+          reservationsToSave: [seedRecord],
+          localReservations: reservations,
+          localSessions: sessions,
+        });
+        await setEntity("courtReservations", seedRecord);
+        setBookingModalOpen(false);
+        toast.success(
+          `Activated Continuous weekly booking for ${seedRecord.clientName} (${seedRecord.court} · ${seedRecord.courtAllocation}).`,
+        );
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : "Failed to save continuous booking.";
+        toast.error(msg);
+      }
       return;
     }
 
@@ -998,56 +1134,68 @@ export function NexusCourtReservationsModule({
     }
 
     const groupId = weeksCount > 1 ? uid("rec-wks") : undefined;
+    const recordsToCreate: CourtReservation[] = datesToCreate.map((slotDate) => ({
+      id: uid("res"),
+      clientName: bookingForm.clientName.trim(),
+      clientType: bookingForm.clientType,
+      ...(bookingForm.linkedPlayerId ? { linkedPlayerId: bookingForm.linkedPlayerId } : {}),
+      ...(bookingForm.linkedTeamName ? { linkedTeamName: bookingForm.linkedTeamName } : {}),
+      phone: bookingForm.phone.trim(),
+      branch: bookingForm.branch,
+      court: bookingForm.court,
+      courtAllocation: bookingForm.courtAllocation,
+      date: slotDate,
+      startTime: bookingForm.startTime,
+      endTime: bookingForm.endTime,
+      durationHours: pricingPreview.durationHours,
+      rateType: bookingForm.rateType,
+      snapshotUnitRate: pricingPreview.unitRate,
+      snapshotExtraPlayerRate: pricingPreview.extraPlayerRate,
+      playerCount: pricingPreview.playerCount,
+      baseCalculatedAmount: pricingPreview.baseCalculatedAmount,
+      freePass: bookingForm.freePass,
+      discountPercent: pricingPreview.discountPercent,
+      discountFixedAmount: pricingPreview.discountFixedAmount,
+      hourlyRate: pricingPreview.effectiveHourly,
+      totalAmount: pricingPreview.finalPayable,
+      paidAmount: 0,
+      paymentStatus: bookingForm.freePass ? "Free Pass" : "Pending",
+      bookingType: weeksCount > 1 ? "recurring" : "walk_in",
+      recurrenceMode: weeksCount > 1 ? "weeks" : "single",
+      isRecurring: weeksCount > 1,
+      ...(weeksCount > 1 ? { recurringWeeks: weeksCount } : {}),
+      ...(groupId ? { recurringGroupId: groupId } : {}),
+      ...(weeksCount > 1 ? { seriesStartDate: bookingForm.date } : {}),
+      status: "Confirmed",
+      ...(bookingForm.notes.trim() ? { notes: bookingForm.notes.trim() } : {}),
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    }));
 
-    for (const slotDate of datesToCreate) {
-      const record: CourtReservation = {
-        id: uid("res"),
-        clientName: bookingForm.clientName.trim(),
-        clientType: bookingForm.clientType,
-        ...(bookingForm.linkedPlayerId ? { linkedPlayerId: bookingForm.linkedPlayerId } : {}),
-        ...(bookingForm.linkedTeamName ? { linkedTeamName: bookingForm.linkedTeamName } : {}),
-        phone: bookingForm.phone.trim(),
-        branch: bookingForm.branch,
-        court: bookingForm.court,
-        courtAllocation: bookingForm.courtAllocation,
-        date: slotDate,
-        startTime: bookingForm.startTime,
-        endTime: bookingForm.endTime,
-        durationHours: pricingPreview.durationHours,
-        rateType: bookingForm.rateType,
-        snapshotUnitRate: pricingPreview.unitRate,
-        snapshotExtraPlayerRate: pricingPreview.extraPlayerRate,
-        playerCount: pricingPreview.playerCount,
-        baseCalculatedAmount: pricingPreview.baseCalculatedAmount,
-        freePass: bookingForm.freePass,
-        discountPercent: pricingPreview.discountPercent,
-        discountFixedAmount: pricingPreview.discountFixedAmount,
-        hourlyRate: pricingPreview.effectiveHourly,
-        totalAmount: pricingPreview.finalPayable,
-        paidAmount: 0,
-        paymentStatus: bookingForm.freePass ? "Free Pass" : "Pending",
-        bookingType: weeksCount > 1 ? "recurring" : "walk_in",
-        recurrenceMode: weeksCount > 1 ? "weeks" : "single",
-        isRecurring: weeksCount > 1,
-        ...(weeksCount > 1 ? { recurringWeeks: weeksCount } : {}),
-        ...(groupId ? { recurringGroupId: groupId } : {}),
-        ...(weeksCount > 1 ? { seriesStartDate: bookingForm.date } : {}),
-        status: "Confirmed",
-        ...(bookingForm.notes.trim() ? { notes: bookingForm.notes.trim() } : {}),
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      };
-      await setEntity("courtReservations", record);
+    try {
+      await atomicBookCourtReservationTransaction({
+        tenantId,
+        ...(formBranchObj?.id ? { branchId: formBranchObj.id, fallbackBranch: formBranchObj } : {}),
+        reservationsToSave: recordsToCreate,
+        localReservations: reservations,
+        localSessions: sessions,
+      });
+      for (const record of recordsToCreate) {
+        await setEntity("courtReservations", record);
+      }
+
+      setBookingModalOpen(false);
+      toast.success(
+        weeksCount > 1
+          ? `Booked ${datesToCreate.length} weekly session(s) for ${bookingForm.clientName}${
+              skippedOffDaysCount > 0 ? ` (${skippedOffDaysCount} Off Day skipped)` : ""
+            }.`
+          : `Confirmed court booking for ${bookingForm.clientName} (${bookingForm.court} · ${bookingForm.courtAllocation}).`,
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to save court booking.";
+      toast.error(msg);
     }
-
-    setBookingModalOpen(false);
-    toast.success(
-      weeksCount > 1
-        ? `Booked ${datesToCreate.length} weekly session(s) for ${bookingForm.clientName}${
-            skippedOffDaysCount > 0 ? ` (${skippedOffDaysCount} Off Day skipped)` : ""
-          }.`
-        : `Confirmed court booking for ${bookingForm.clientName} (${bookingForm.court} · ${bookingForm.courtAllocation}).`,
-    );
   };
 
   // =========================================================================
@@ -1057,6 +1205,16 @@ export function NexusCourtReservationsModule({
     const items: CalendarDisplayItem[] = [];
     const targetWeekday = getIsoWeekdayIndexMon0(targetDate);
     const isTargetOffDay = offDayMap.has(targetDate);
+
+    // Safely resolve a booking's court name to an existing branch court so historical/renamed/removed court bookings always render cleanly
+    const resolveDisplayCourtName = (rawCourt?: string): string => {
+      const fallback = branchCourts[0]?.name || "Court 1";
+      if (!rawCourt || !rawCourt.trim()) return fallback;
+      const matched = branchCourts.find(
+        (c) => c.name.trim().toLowerCase() === rawCourt.trim().toLowerCase(),
+      );
+      return matched ? matched.name : fallback;
+    };
 
     // 1. Concrete Vescio Nexus CourtReservations on targetDate for activeBranchName
     const concreteForDate = reservations.filter(
@@ -1080,6 +1238,7 @@ export function NexusCourtReservationsModule({
             ? `${r.recurringWeeks || "Fixed"} Wks`
             : undefined;
 
+      const resolvedCourt = resolveDisplayCourtName(r.court);
       items.push({
         key: `nexus-${r.id}`,
         source: "nexus",
@@ -1088,7 +1247,7 @@ export function NexusCourtReservationsModule({
         title: r.clientName,
         subtitle: `${r.rateType || "Court Rental"}${r.phone ? ` · ${r.phone}` : ""}`,
         branch: r.branch,
-        court: r.court,
+        court: resolvedCourt,
         allocation: r.courtAllocation,
         date: r.date,
         startTime: r.startTime,
@@ -1126,6 +1285,7 @@ export function NexusCourtReservationsModule({
         const grpId = seed.recurringGroupId || seed.id;
         if (materializedGroupKeys.has(`${grpId}::${targetDate}`)) continue;
 
+        const resolvedSeedCourt = resolveDisplayCourtName(seed.court);
         items.push({
           key: `nexus-proj-${seed.id}-${targetDate}`,
           source: "nexus",
@@ -1135,7 +1295,7 @@ export function NexusCourtReservationsModule({
           title: seed.clientName,
           subtitle: `${seed.rateType || "Court Rental"} · Continuous`,
           branch: seed.branch,
-          court: seed.court,
+          court: resolvedSeedCourt,
           allocation: seed.courtAllocation,
           date: targetDate,
           startTime: seed.startTime,
@@ -1171,7 +1331,7 @@ export function NexusCourtReservationsModule({
         title: s.title,
         subtitle: `Academy · ${s.team || s.teamA || s.kind}`,
         branch: s.branch,
-        court: s.court || branchCourts[0]?.name || "Court 1",
+        court: resolveDisplayCourtName(s.court),
         allocation: (s.courtAllocation || "Full Court") as CourtAllocationType,
         date: s.date,
         startTime: s.time,
@@ -1332,83 +1492,84 @@ export function NexusCourtReservationsModule({
 
   const handleCompleteAndCashIn = async () => {
     if (!selectedSessionItem) return;
-    const concrete = await materializeProjectedOccurrence(selectedSessionItem);
-    if (!concrete) return;
+    try {
+      const concrete = await materializeProjectedOccurrence(selectedSessionItem);
+      if (!concrete) return;
 
-    const alreadyPaid = Number(concrete.paidAmount) || 0;
-    const confirmedCollectAmount = concrete.freePass
-      ? 0
-      : Math.max(0, roundCurrency(Number(cashInPayableAmount) || 0));
-    const newTotalPaid = roundCurrency(alreadyPaid + confirmedCollectAmount);
-    const updatedFinalTotal = concrete.freePass
-      ? 0
-      : alreadyPaid === 0
-        ? confirmedCollectAmount
-        : Math.max(Number(concrete.totalAmount) || 0, newTotalPaid);
+      const {
+        confirmedCollectAmount,
+        newTotalPaid,
+        updatedFinalTotal,
+        paymentStatus: finalPaymentStatus,
+      } = calculateCourtCashInMath({
+        totalAmount: Number(concrete.totalAmount) || 0,
+        alreadyPaidAmount: Number(concrete.paidAmount) || 0,
+        collectAmountInput: cashInPayableAmount,
+        freePass: concrete.freePass,
+        paymentMethod: cashInPaymentMethod,
+        hasLinkedPlayer: Boolean(concrete.linkedPlayerId),
+      });
 
-    const nowIso = new Date().toISOString();
-    const staffName = currentUser?.name || "Facility Staff";
+      const nowIso = new Date().toISOString();
+      const staffName = currentUser?.name || "Facility Staff";
 
-    let ledgerId = concrete.ledgerEntryId;
+      let ledgerId = concrete.ledgerEntryId;
 
-    if (confirmedCollectAmount > 0) {
-      if (cashInPaymentMethod === "Account Charge" && concrete.linkedPlayerId) {
-        const linkedPlayer = players.find((p) => p.id === concrete.linkedPlayerId);
-        if (linkedPlayer) {
-          await patchEntity("players", linkedPlayer.id, {
-            balance: roundCurrency((Number(linkedPlayer.balance) || 0) + confirmedCollectAmount),
-          });
+      if (confirmedCollectAmount > 0) {
+        if (cashInPaymentMethod === "Account Charge" && concrete.linkedPlayerId) {
+          const linkedPlayer = players.find((p) => p.id === concrete.linkedPlayerId);
+          if (linkedPlayer) {
+            await patchEntity("players", linkedPlayer.id, {
+              balance: roundCurrency((Number(linkedPlayer.balance) || 0) + confirmedCollectAmount),
+            });
+          }
+        } else {
+          ledgerId = uid("led-res");
+          const ledgerEntry: LedgerEntry = {
+            id: ledgerId,
+            date: today,
+            account: "Court Rental Income (Vescio Nexus)",
+            category: "Facility Reservation",
+            entry: `Court Cash-In · ${concrete.clientName} (${concrete.court} · ${concrete.courtAllocation})`,
+            description: `Session ${concrete.date} ${concrete.startTime}-${concrete.endTime} · ${concrete.rateType || "Court Rental"} · ${cashInPaymentMethod}`,
+            type: "Revenue",
+            amount: confirmedCollectAmount,
+            status: "Collected",
+            paymentMethod: cashInPaymentMethod,
+            branch: concrete.branch,
+            referenceId: concrete.id,
+          };
+          await setEntity("ledger", ledgerEntry);
         }
-      } else {
-        ledgerId = uid("led-res");
-        const ledgerEntry: LedgerEntry = {
-          id: ledgerId,
-          date: today,
-          account: "Court Rental Income (Vescio Nexus)",
-          category: "Facility Reservation",
-          entry: `Court Cash-In · ${concrete.clientName} (${concrete.court} · ${concrete.courtAllocation})`,
-          description: `Session ${concrete.date} ${concrete.startTime}-${concrete.endTime} · ${concrete.rateType || "Court Rental"} · ${cashInPaymentMethod}`,
-          type: "Revenue",
-          amount: confirmedCollectAmount,
-          status: "Collected",
-          paymentMethod: cashInPaymentMethod,
-          branch: concrete.branch,
-          referenceId: concrete.id,
-        };
-        await setEntity("ledger", ledgerEntry);
       }
+
+      const updatedReservation: CourtReservation = {
+        ...concrete,
+        totalAmount: updatedFinalTotal,
+        paidAmount: concrete.freePass ? 0 : newTotalPaid,
+        paymentStatus: finalPaymentStatus,
+        paymentMethod: cashInPaymentMethod,
+        status: "Completed",
+        cashedInAt: nowIso,
+        cashedInBy: staffName,
+        ...(ledgerId ? { ledgerEntryId: ledgerId } : {}),
+        ...(cashInNotes.trim() ? { notes: cashInNotes.trim() } : {}),
+        updatedAt: nowIso,
+      };
+
+      await setEntity("courtReservations", updatedReservation);
+      setSelectedSessionItem(null);
+
+      toast.success(
+        concrete.freePass
+          ? `Completed Free Pass session for ${concrete.clientName}.`
+          : cashInPaymentMethod === "Account Charge" && concrete.linkedPlayerId
+            ? `Completed session & charged ${money(confirmedCollectAmount)} to ${concrete.clientName}'s account.`
+            : `Completed & Cashed In ${money(confirmedCollectAmount)} (${cashInPaymentMethod}) to the Financial Ledger!`,
+      );
+    } catch {
+      /* Error toast handled by data-store */
     }
-
-    const finalPaymentStatus: CourtReservation["paymentStatus"] = concrete.freePass
-      ? "Free Pass"
-      : cashInPaymentMethod === "Account Charge" && concrete.linkedPlayerId
-        ? "Charged to Account"
-        : "Paid";
-
-    const updatedReservation: CourtReservation = {
-      ...concrete,
-      totalAmount: updatedFinalTotal,
-      paidAmount: concrete.freePass ? 0 : newTotalPaid,
-      paymentStatus: finalPaymentStatus,
-      paymentMethod: cashInPaymentMethod,
-      status: "Completed",
-      cashedInAt: nowIso,
-      cashedInBy: staffName,
-      ...(ledgerId ? { ledgerEntryId: ledgerId } : {}),
-      ...(cashInNotes.trim() ? { notes: cashInNotes.trim() } : {}),
-      updatedAt: nowIso,
-    };
-
-    await setEntity("courtReservations", updatedReservation);
-    setSelectedSessionItem(null);
-
-    toast.success(
-      concrete.freePass
-        ? `Completed Free Pass session for ${concrete.clientName}.`
-        : cashInPaymentMethod === "Account Charge" && concrete.linkedPlayerId
-          ? `Completed session & charged ${money(confirmedCollectAmount)} to ${concrete.clientName}'s account.`
-          : `Completed & Cashed In ${money(confirmedCollectAmount)} (${cashInPaymentMethod}) to the Financial Ledger!`,
-    );
   };
 
   const handleStopContinuousSeries = async (item: CalendarDisplayItem) => {
@@ -1425,37 +1586,57 @@ export function NexusCourtReservationsModule({
 
     if (!targetSeed) return;
 
-    await patchEntity("courtReservations", targetSeed.id, {
-      continuousActive: false,
-      continuousStoppedAfterDate: item.date,
-      updatedAt: new Date().toISOString(),
-    });
-    setSelectedSessionItem(null);
-    toast.success(
-      `Stopped continuous weekly recurrence for ${targetSeed.clientName} after ${item.date}.`,
-    );
+    try {
+      await patchEntity("courtReservations", targetSeed.id, {
+        continuousActive: false,
+        continuousStoppedAfterDate: item.date,
+        updatedAt: new Date().toISOString(),
+      });
+      setSelectedSessionItem(null);
+      toast.success(
+        `Stopped continuous weekly recurrence for ${targetSeed.clientName} after ${item.date}.`,
+      );
+    } catch {
+      /* Error toast handled by data-store */
+    }
   };
 
   const handleCancelSingleSession = async (item: CalendarDisplayItem) => {
-    if (item.isProjectedContinuous && item.seedReservation) {
-      const nextSkipped = Array.from(
-        new Set([...(item.seedReservation.skippedDates || []), item.date]),
-      );
-      await patchEntity("courtReservations", item.seedReservation.id, {
-        skippedDates: nextSkipped,
-        updatedAt: new Date().toISOString(),
-      });
-      setSelectedSessionItem(null);
-      toast.success(`Cancelled ${item.date} occurrence for ${item.title}.`);
-      return;
-    }
-    if (item.reservation) {
-      await patchEntity("courtReservations", item.reservation.id, {
-        status: "Cancelled",
-        updatedAt: new Date().toISOString(),
-      });
-      setSelectedSessionItem(null);
-      toast.success(`Cancelled booking for ${item.title} on ${item.date}.`);
+    try {
+      if (item.isProjectedContinuous && item.seedReservation) {
+        const nextSkipped = Array.from(
+          new Set([...(item.seedReservation.skippedDates || []), item.date]),
+        );
+        await patchEntity("courtReservations", item.seedReservation.id, {
+          skippedDates: nextSkipped,
+          updatedAt: new Date().toISOString(),
+        });
+        setSelectedSessionItem(null);
+        toast.success(`Cancelled ${item.date} occurrence for ${item.title}.`);
+        return;
+      }
+      if (item.reservation) {
+        const cancelledRes: CourtReservation = {
+          ...item.reservation,
+          status: "Cancelled",
+          updatedAt: new Date().toISOString(),
+        };
+        await atomicBookCourtReservationTransaction({
+          tenantId,
+          reservationsToSave: [cancelledRes],
+          previousReservation: item.reservation,
+          localReservations: reservations,
+          localSessions: sessions,
+        }).catch(() => {});
+        await patchEntity("courtReservations", item.reservation.id, {
+          status: "Cancelled",
+          updatedAt: cancelledRes.updatedAt,
+        });
+        setSelectedSessionItem(null);
+        toast.success(`Cancelled booking for ${item.title} on ${item.date}.`);
+      }
+    } catch {
+      /* Error toast handled by data-store */
     }
   };
 
@@ -2465,7 +2646,14 @@ export function NexusCourtReservationsModule({
                         <Button
                           variant="ghost"
                           size="xs"
-                          onClick={() => void deleteEntity("courtReservations", r.id)}
+                          onClick={async () => {
+                            try {
+                              await deleteEntity("courtReservations", r.id);
+                              toast.success("Booking record deleted.");
+                            } catch {
+                              /* Error toast handled by data-store */
+                            }
+                          }}
                           title="Delete booking record"
                         >
                           <Trash2 className="h-3.5 w-3.5 text-ink-400 hover:text-red-400" />
