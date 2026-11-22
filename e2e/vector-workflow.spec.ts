@@ -272,12 +272,12 @@ test.describe("Vescio Vector — Full Academy Workflow E2E Suite", () => {
     // -------------------------------------------------------------------------
     await page.goto("/coach", { waitUntil: "domcontentloaded" });
 
-    await expect(
-      page
-        .locator("h1, h2, h3, div, span")
-        .filter({ hasText: /Coach Portal|\/COACH/i })
-        .first(),
-    ).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/Coach Portal|Administrative Coach Switcher/i).first()).toBeVisible(
+      { timeout: 15000 },
+    );
+    await expect(page.getByRole("button", { name: /Report Issue/i }).first()).toBeVisible({
+      timeout: 15000,
+    });
 
     // Toggle through Coach Portal bottom navigation tabs
     const coachSubTabs = [
@@ -289,7 +289,7 @@ test.describe("Vescio Vector — Full Academy Workflow E2E Suite", () => {
       /\bHome\b/i,
     ];
     for (const tabRegex of coachSubTabs) {
-      const tabBtn = page.getByRole("button", { name: tabRegex }).first();
+      const tabBtn = page.locator("nav button").filter({ hasText: tabRegex }).first();
       await expect(tabBtn).toBeVisible({ timeout: 15000 });
       await tabBtn.click();
     }
