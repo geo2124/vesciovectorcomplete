@@ -1292,11 +1292,7 @@ function VescioNexusHub() {
               <button
                 type="button"
                 onClick={() => setActiveModule("courts")}
-                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
-                  activeModule === "courts"
-                    ? "bg-court-500/20 text-court-300 ring-1 ring-court-500/40"
-                    : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
-                }`}
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold text-ink-300 transition-all hover:bg-ink-850 hover:text-ink-100"
               >
                 <Calendar className="h-3.5 w-3.5 shrink-0" />
                 <span>Court Reservation</span>
@@ -1308,11 +1304,7 @@ function VescioNexusHub() {
               <button
                 type="button"
                 onClick={() => setActiveModule("gym")}
-                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
-                  activeModule === "gym"
-                    ? "bg-sky-500/20 text-sky-300 ring-1 ring-sky-500/40"
-                    : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
-                }`}
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold text-ink-300 transition-all hover:bg-ink-850 hover:text-ink-100"
               >
                 <Dumbbell className="h-3.5 w-3.5 shrink-0" />
                 <span>Gym</span>
@@ -1324,11 +1316,7 @@ function VescioNexusHub() {
               <button
                 type="button"
                 onClick={() => setActiveModule("physio")}
-                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
-                  activeModule === "physio"
-                    ? "bg-rose-500/20 text-rose-300 ring-1 ring-rose-500/40"
-                    : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
-                }`}
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold text-ink-300 transition-all hover:bg-ink-850 hover:text-ink-100"
               >
                 <HeartPulse className="h-3.5 w-3.5 shrink-0" />
                 <span>Physiotherapy</span>
@@ -1340,11 +1328,7 @@ function VescioNexusHub() {
               <button
                 type="button"
                 onClick={() => setActiveModule("pos")}
-                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
-                  activeModule === "pos"
-                    ? "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40"
-                    : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
-                }`}
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold text-ink-300 transition-all hover:bg-ink-850 hover:text-ink-100"
               >
                 <ShoppingCart className="h-3.5 w-3.5 shrink-0" />
                 <span>Kiosk POS</span>

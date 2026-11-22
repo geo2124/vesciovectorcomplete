@@ -16,6 +16,8 @@ import { Route as BranchesRouteImport } from './routes/branches'
 import { Route as CalendarRouteImport } from './routes/calendar'
 import { Route as CoachRouteImport } from './routes/coach'
 import { Route as CoachesRouteImport } from './routes/coaches'
+import { Route as CrmRouteImport } from './routes/crm'
+import { Route as DocumentationRouteImport } from './routes/documentation'
 import { Route as MerchandiseRouteImport } from './routes/merchandise'
 import { Route as PersonnelRouteImport } from './routes/personnel'
 import { Route as PlayersRouteImport } from './routes/players'
@@ -24,6 +26,7 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as TeamsRouteImport } from './routes/teams'
 import { Route as TechnicalRouteImport } from './routes/technical'
+import { Route as UpErpRouteImport } from './routes/up-erp'
 import { Route as UsersRouteImport } from './routes/users'
 
 const IndexRoute = IndexRouteImport.update({
@@ -59,6 +62,16 @@ const CoachRoute = CoachRouteImport.update({
 const CoachesRoute = CoachesRouteImport.update({
   id: '/coaches',
   path: '/coaches',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CrmRoute = CrmRouteImport.update({
+  id: '/crm',
+  path: '/crm',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DocumentationRoute = DocumentationRouteImport.update({
+  id: '/documentation',
+  path: '/documentation',
   getParentRoute: () => rootRouteImport,
 } as any)
 const MerchandiseRoute = MerchandiseRouteImport.update({
@@ -101,6 +114,11 @@ const TechnicalRoute = TechnicalRouteImport.update({
   path: '/technical',
   getParentRoute: () => rootRouteImport,
 } as any)
+const UpErpRoute = UpErpRouteImport.update({
+  id: '/up-erp',
+  path: '/up-erp',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const UsersRoute = UsersRouteImport.update({
   id: '/users',
   path: '/users',
@@ -115,6 +133,8 @@ export interface FileRoutesByFullPath {
   '/calendar': typeof CalendarRoute
   '/coach': typeof CoachRoute
   '/coaches': typeof CoachesRoute
+  '/crm': typeof CrmRoute
+  '/documentation': typeof DocumentationRoute
   '/merchandise': typeof MerchandiseRoute
   '/personnel': typeof PersonnelRoute
   '/players': typeof PlayersRoute
@@ -123,6 +143,7 @@ export interface FileRoutesByFullPath {
   '/setup': typeof SetupRoute
   '/teams': typeof TeamsRoute
   '/technical': typeof TechnicalRoute
+  '/up-erp': typeof UpErpRoute
   '/users': typeof UsersRoute
 }
 export interface FileRoutesByTo {
@@ -133,6 +154,8 @@ export interface FileRoutesByTo {
   '/calendar': typeof CalendarRoute
   '/coach': typeof CoachRoute
   '/coaches': typeof CoachesRoute
+  '/crm': typeof CrmRoute
+  '/documentation': typeof DocumentationRoute
   '/merchandise': typeof MerchandiseRoute
   '/personnel': typeof PersonnelRoute
   '/players': typeof PlayersRoute
@@ -141,6 +164,7 @@ export interface FileRoutesByTo {
   '/setup': typeof SetupRoute
   '/teams': typeof TeamsRoute
   '/technical': typeof TechnicalRoute
+  '/up-erp': typeof UpErpRoute
   '/users': typeof UsersRoute
 }
 export interface FileRoutesById {
@@ -152,6 +176,8 @@ export interface FileRoutesById {
   '/calendar': typeof CalendarRoute
   '/coach': typeof CoachRoute
   '/coaches': typeof CoachesRoute
+  '/crm': typeof CrmRoute
+  '/documentation': typeof DocumentationRoute
   '/merchandise': typeof MerchandiseRoute
   '/personnel': typeof PersonnelRoute
   '/players': typeof PlayersRoute
@@ -160,6 +186,7 @@ export interface FileRoutesById {
   '/setup': typeof SetupRoute
   '/teams': typeof TeamsRoute
   '/technical': typeof TechnicalRoute
+  '/up-erp': typeof UpErpRoute
   '/users': typeof UsersRoute
 }
 export interface FileRouteTypes {
@@ -172,6 +199,8 @@ export interface FileRouteTypes {
     | '/calendar'
     | '/coach'
     | '/coaches'
+    | '/crm'
+    | '/documentation'
     | '/merchandise'
     | '/personnel'
     | '/players'
@@ -180,6 +209,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/teams'
     | '/technical'
+    | '/up-erp'
     | '/users'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -190,6 +220,8 @@ export interface FileRouteTypes {
     | '/calendar'
     | '/coach'
     | '/coaches'
+    | '/crm'
+    | '/documentation'
     | '/merchandise'
     | '/personnel'
     | '/players'
@@ -198,6 +230,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/teams'
     | '/technical'
+    | '/up-erp'
     | '/users'
   id:
     | '__root__'
@@ -208,6 +241,8 @@ export interface FileRouteTypes {
     | '/calendar'
     | '/coach'
     | '/coaches'
+    | '/crm'
+    | '/documentation'
     | '/merchandise'
     | '/personnel'
     | '/players'
@@ -216,6 +251,7 @@ export interface FileRouteTypes {
     | '/setup'
     | '/teams'
     | '/technical'
+    | '/up-erp'
     | '/users'
   fileRoutesById: FileRoutesById
 }
@@ -227,6 +263,8 @@ export interface RootRouteChildren {
   CalendarRoute: typeof CalendarRoute
   CoachRoute: typeof CoachRoute
   CoachesRoute: typeof CoachesRoute
+  CrmRoute: typeof CrmRoute
+  DocumentationRoute: typeof DocumentationRoute
   MerchandiseRoute: typeof MerchandiseRoute
   PersonnelRoute: typeof PersonnelRoute
   PlayersRoute: typeof PlayersRoute
@@ -235,6 +273,7 @@ export interface RootRouteChildren {
   SetupRoute: typeof SetupRoute
   TeamsRoute: typeof TeamsRoute
   TechnicalRoute: typeof TechnicalRoute
+  UpErpRoute: typeof UpErpRoute
   UsersRoute: typeof UsersRoute
 }
 
@@ -287,6 +326,20 @@ declare module '@tanstack/react-router' {
       path: '/coaches'
       fullPath: '/coaches'
       preLoaderRoute: typeof CoachesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/crm': {
+      id: '/crm'
+      path: '/crm'
+      fullPath: '/crm'
+      preLoaderRoute: typeof CrmRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/documentation': {
+      id: '/documentation'
+      path: '/documentation'
+      fullPath: '/documentation'
+      preLoaderRoute: typeof DocumentationRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/merchandise': {
@@ -345,6 +398,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TechnicalRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/up-erp': {
+      id: '/up-erp'
+      path: '/up-erp'
+      fullPath: '/up-erp'
+      preLoaderRoute: typeof UpErpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/users': {
       id: '/users'
       path: '/users'
@@ -363,6 +423,8 @@ const rootRouteChildren: RootRouteChildren = {
   CalendarRoute: CalendarRoute,
   CoachRoute: CoachRoute,
   CoachesRoute: CoachesRoute,
+  CrmRoute: CrmRoute,
+  DocumentationRoute: DocumentationRoute,
   MerchandiseRoute: MerchandiseRoute,
   PersonnelRoute: PersonnelRoute,
   PlayersRoute: PlayersRoute,
@@ -371,6 +433,7 @@ const rootRouteChildren: RootRouteChildren = {
   SetupRoute: SetupRoute,
   TeamsRoute: TeamsRoute,
   TechnicalRoute: TechnicalRoute,
+  UpErpRoute: UpErpRoute,
   UsersRoute: UsersRoute,
 }
 export const routeTree = rootRouteImport
