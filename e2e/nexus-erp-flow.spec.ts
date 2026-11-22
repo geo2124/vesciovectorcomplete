@@ -38,11 +38,12 @@ test.describe("Vescio Nexus ERP — Full Multi-Module E2E Suite", () => {
       .getByRole("button", { name: /Launch Courts|Court Reservation/i })
       .first();
     await expect(launchCourtsBtn).toBeVisible({ timeout: 15000 });
+    await expect(launchCourtsBtn).toBeEnabled({ timeout: 15000 });
     await launchCourtsBtn.click();
 
     await expect(overviewKpiCard).toBeHidden({ timeout: 15000 });
     const backToOverviewBtn = page.getByRole("button", { name: /Overview/i }).first();
-    const fullScreenBtn = page.getByRole("button", { name: /^Full Screen$/i }).first();
+    const fullScreenBtn = page.getByRole("button", { name: /Full Screen/i }).first();
     await expect(backToOverviewBtn).toBeVisible({ timeout: 15000 });
     await expect(fullScreenBtn).toBeVisible({ timeout: 15000 });
 
@@ -71,9 +72,9 @@ test.describe("Vescio Nexus ERP — Full Multi-Module E2E Suite", () => {
     await expect(newBookingBtn).toBeVisible({ timeout: 15000 });
     await newBookingBtn.click();
 
-    await expect(
-      page.getByText(/New Court Reservation — Dynamic Pricing & Conflict Guard/i).first(),
-    ).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/New Court & Facility Booking/i).first()).toBeVisible({
+      timeout: 15000,
+    });
 
     const bookingClientInput = page.getByPlaceholder("Enter client, group, or club name");
     await expect(bookingClientInput).toBeVisible({ timeout: 15000 });
@@ -81,7 +82,9 @@ test.describe("Vescio Nexus ERP — Full Multi-Module E2E Suite", () => {
     await expect(bookingClientInput).toHaveValue("[E2E TEST] Court Booking");
 
     // Verify dynamic pricing summary responds cleanly
-    await expect(page.getByText(/Net Booking Total/i).first()).toBeVisible({ timeout: 15000 });
+    await expect(
+      page.getByText(/Session Payable:|Pricing Overrides & Final Snapshot Fee/i).first(),
+    ).toBeVisible({ timeout: 15000 });
 
     // Cancel modal so no orphan test data remains
     await page
@@ -93,7 +96,10 @@ test.describe("Vescio Nexus ERP — Full Multi-Module E2E Suite", () => {
     // -------------------------------------------------------------------------
     // 3. Gym Module
     // -------------------------------------------------------------------------
-    const gymTabBtn = page.getByRole("button", { name: /^Gym$/i }).first();
+    const gymTabBtn = page
+      .locator("header button")
+      .filter({ hasText: /\bGym\b/i })
+      .first();
     await expect(gymTabBtn).toBeVisible({ timeout: 15000 });
     await gymTabBtn.click();
 
@@ -138,7 +144,10 @@ test.describe("Vescio Nexus ERP — Full Multi-Module E2E Suite", () => {
     // -------------------------------------------------------------------------
     // 4. Physiotherapy Module
     // -------------------------------------------------------------------------
-    const physioTabBtn = page.getByRole("button", { name: /^Physio$/i }).first();
+    const physioTabBtn = page
+      .locator("header button")
+      .filter({ hasText: /Physio/i })
+      .first();
     await expect(physioTabBtn).toBeVisible({ timeout: 15000 });
     await physioTabBtn.click();
 
@@ -165,7 +174,10 @@ test.describe("Vescio Nexus ERP — Full Multi-Module E2E Suite", () => {
     // -------------------------------------------------------------------------
     // 5. Kiosk / POS Module
     // -------------------------------------------------------------------------
-    const posTabBtn = page.getByRole("button", { name: /Kiosk POS/i }).first();
+    const posTabBtn = page
+      .locator("header button")
+      .filter({ hasText: /Kiosk POS/i })
+      .first();
     await expect(posTabBtn).toBeVisible({ timeout: 15000 });
     await posTabBtn.click();
 
@@ -176,23 +188,23 @@ test.describe("Vescio Nexus ERP — Full Multi-Module E2E Suite", () => {
       timeout: 15000,
     });
 
-    // Add a catalog item to the cart if products are available
-    const skuBadges = page.getByText(/^SKU:/i);
-    const skuCount = await skuBadges.count();
-    if (skuCount > 0) {
-      await skuBadges.first().click();
+    // Add a catalog item to the cart from the touch product grid
+    const productCards = page.locator("button:not([disabled])").filter({ hasText: /in stock|∞/i });
+    const productCount = await productCards.count();
+    if (productCount > 0) {
+      await productCards.first().click();
 
-      // Verify cart updates with currency display (USD & LBP) and Clear button appears
+      // Verify cart updates with Grand Total and Clear button appears
       const clearCartBtn = page.getByRole("button", { name: /^Clear$/i }).first();
       await expect(clearCartBtn).toBeVisible({ timeout: 15000 });
-      await expect(page.getByText(/Total \(LBP\)/i).first()).toBeVisible({ timeout: 15000 });
+      await expect(page.getByText(/Grand Total/i).first()).toBeVisible({ timeout: 15000 });
       await expect(
         page.getByRole("button", { name: /Complete Sale & Print Receipt/i }).first(),
       ).toBeEnabled({ timeout: 15000 });
 
       // Clear the cart cleanly
       await clearCartBtn.click();
-      await expect(page.getByText(/Tap products on the left to add to cart/i).first()).toBeVisible({
+      await expect(page.getByText(/Cart is empty\./i).first()).toBeVisible({
         timeout: 15000,
       });
     }

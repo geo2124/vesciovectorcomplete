@@ -22,13 +22,15 @@ test.describe("Vescio Vector CRM — Full Pipeline E2E Suite", () => {
     await expect(page.getByText(/Basketball Academy CRM/i).first()).toBeVisible({
       timeout: 15000,
     });
-    await expect(page.getByRole("button", { name: /Kanban Board/i }).first()).toBeVisible({
+    const kanbanBoardBtn = page.getByRole("button", { name: /Kanban Board/i }).first();
+    await expect(kanbanBoardBtn).toBeVisible({
       timeout: 15000,
     });
     await expect(page.getByRole("button", { name: /List View/i }).first()).toBeVisible({
       timeout: 15000,
     });
-    await expect(page.getByText(/1\. Inquiry \/ New Lead/i).first()).toBeVisible({
+    await kanbanBoardBtn.click();
+    await expect(page.getByText(/New Inquiries \/ Leads/i).first()).toBeVisible({
       timeout: 15000,
     });
 
@@ -87,14 +89,14 @@ test.describe("Vescio Vector CRM — Full Pipeline E2E Suite", () => {
     // Advance/update pipeline stage to Trial Scheduled
     const stageSelectInModal = page
       .locator("select")
-      .filter({ hasText: "Stage: 1. Inquiry / New Lead" })
+      .filter({ hasText: /Stage:\s*New Inquiries \/ Leads/i })
       .first();
     await expect(stageSelectInModal).toBeVisible({ timeout: 15000 });
     await stageSelectInModal.selectOption("trial_scheduled");
 
-    await expect(
-      page.getByText(/Moved pipeline stage to "2\. Trial Scheduled"/i).first(),
-    ).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(/Moved pipeline stage to "Trial Scheduled"/i).first()).toBeVisible({
+      timeout: 15000,
+    });
 
     // Close detail modal temporarily to verify filters
     await page.keyboard.press("Escape");
