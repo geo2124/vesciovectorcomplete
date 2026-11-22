@@ -4,7 +4,8 @@ const PORT = process.env.PORT || "3000";
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || `http://localhost:${PORT}`;
 
 export default defineConfig({
-  testDir: "./tests",
+  testDir: ".",
+  testMatch: ["e2e/**/*.spec.ts", "tests/**/*.spec.ts"],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
