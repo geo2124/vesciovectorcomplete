@@ -23,7 +23,8 @@ export type ExportPdfOptions = {
   subtitle?: string;
   academy?: string;
   logo?: string | null;
-  columns: string[];
+  columns?: string[];
+  headers?: string[];
   rows: string[][];
   summary?: { label: string; value: string }[];
   filename?: string;
@@ -51,11 +52,13 @@ export async function exportPdf(
     title,
     subtitle,
     academy = "Vescio Vector Academy",
-    columns: cols,
+    columns: rawCols,
+    headers,
     rows: rws,
     summary: sum = [],
     filename,
   } = opts;
+  const cols = rawCols || headers || [];
   const fileName =
     filename ||
     `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${new Date().toISOString().slice(0, 10)}.pdf`;

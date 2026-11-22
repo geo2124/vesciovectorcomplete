@@ -145,7 +145,7 @@ function createEmptyLeadDraft(defaultBranch = "HQ"): CrmLead {
     id: `crm-${Date.now().toString(36)}`,
     stage: "inquiry",
     playerName: "",
-    gender: "Male",
+    gender: "Boy",
     dob: "2013-05-15",
     category: "U-14",
     preferredBranch: defaultBranch,
@@ -163,7 +163,7 @@ function createEmptyLeadDraft(defaultBranch = "HQ"): CrmLead {
     trialDate: "",
     trialTeam: "",
     trialEvaluationNotes: "",
-    trialRating: 4,
+    trialRating: "4",
     offeredPackageId: "",
     offeredMonthlyFee: 85,
     offerSentDate: todayIso,
@@ -1625,7 +1625,8 @@ function CrmPipelinePage() {
                                 {c.type}
                               </span>
                               <span className="font-mono text-[10px] text-muted-foreground">
-                                {c.timestamp.replace("T", " ").slice(0, 16)} • {c.author || "Admin"}
+                                {(c.timestamp || c.createdAt || "").replace("T", " ").slice(0, 16)}{" "}
+                                • {c.author || "Admin"}
                               </span>
                             </div>
                             <p className="mt-1 text-muted-foreground">{c.note}</p>
@@ -1778,7 +1779,7 @@ function CrmPipelinePage() {
                                       </span>
                                     </div>
                                     <span className="font-mono font-semibold">
-                                      {money(inv.netAmount)}
+                                      {money(inv.netAmount ?? inv.amount ?? 0)}
                                     </span>
                                   </div>
                                 ))

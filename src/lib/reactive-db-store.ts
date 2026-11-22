@@ -94,7 +94,7 @@ export class ReactiveDBStore {
     };
   }
 
-  private notify(slices: (keyof DB)[]) {
+  private notify(slices: SliceKey[]) {
     const listenersToCall = new Set<Listener>();
     for (const slice of slices) {
       const set = this.sliceListeners.get(slice);

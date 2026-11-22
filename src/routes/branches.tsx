@@ -2416,7 +2416,7 @@ function BranchesPage() {
                 Cancel
               </Button>
               <Button
-                variant="bad"
+                variant="danger"
                 size="sm"
                 onClick={confirmDeleteBranch}
                 disabled={isDeletingBranch}

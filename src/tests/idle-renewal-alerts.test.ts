@@ -10,7 +10,7 @@ import {
 const makePlayer = (overrides: Partial<Player> = {}): Player => ({
   id: "p-1",
   name: "Ziad Mansour",
-  gender: "Male",
+  gender: "Boy",
   dob: "2013-04-10",
   category: "U-14",
   teams: ["U-14 Boys Elite"],
@@ -18,6 +18,7 @@ const makePlayer = (overrides: Partial<Player> = {}): Player => ({
   phone: "03-111222",
   parent: "Nabil Mansour",
   parentPhone: "03-111222",
+  school: "Sagesse High",
   fee: 100,
   status: "Active",
   balance: 0,
@@ -31,6 +32,9 @@ const makeCompletedSession = (
   overrides: Partial<SessionItem> = {},
 ): SessionItem => ({
   id,
+  title: "U-14 Practice",
+  detail: "Court 1",
+  coach: "Coach Karim",
   team: "U-14 Boys Elite",
   branch: "Downtown Arena",
   court: "Court 1",
@@ -53,6 +57,7 @@ describe("Idle Renewal & 3-Session Alert Engine", () => {
       invoiceNumber: "INV-2026-06-001",
       playerId: "p-paid",
       playerName: "Paid Player",
+      branch: "Downtown Arena",
       team: "U-14 Boys Elite",
       billingMonth: "June",
       month: "06",
@@ -62,6 +67,7 @@ describe("Idle Renewal & 3-Session Alert Engine", () => {
       paidDate: "2026-06-01",
       issuedDate: "2026-06-01",
       dueDate: "2026-06-15",
+      createdAt: "2026-06-01",
     };
 
     const renewal = evaluateMonthlyIdleCycleRenewal({

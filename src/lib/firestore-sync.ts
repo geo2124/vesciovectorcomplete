@@ -1001,7 +1001,7 @@ export async function syncToFirestore(tenantId: string, current: DB, next: DB) {
             item &&
             typeof (item as { authUid?: unknown }).authUid === "string" &&
             (item as { authUid?: string }).authUid
-              ? (item as { authUid: string }).authUid
+              ? ((item as { authUid?: string }).authUid as string)
               : id;
           pendingOps.push({
             type: "set",
@@ -1017,7 +1017,7 @@ export async function syncToFirestore(tenantId: string, current: DB, next: DB) {
             item &&
             typeof (item as { authUid?: unknown }).authUid === "string" &&
             (item as { authUid?: string }).authUid
-              ? (item as { authUid: string }).authUid
+              ? ((item as { authUid?: string }).authUid as string)
               : id;
           pendingOps.push({ type: "delete", path: [key, docId] });
         }
@@ -2123,15 +2123,17 @@ export async function atomicCompletePosSaleTransaction(params: {
         if (catItem.linkedStockId) {
           const linkedStock = stockSnaps.get(catItem.linkedStockId);
           if (linkedStock) {
-            const nextMerchQty = Math.max(0, (Number(linkedStock.qty) || 0) - totalQty);
+            const currentMerchQty = Number(linkedStock.stock ?? linkedStock.qty) || 0;
+            const nextMerchQty = Math.max(0, currentMerchQty - totalQty);
             const nextStatus: StockItem["status"] =
               nextMerchQty <= 0
                 ? "Out of stock"
-                : nextMerchQty <= (Number(linkedStock.reorderLevel) || 5)
+                : nextMerchQty <= (Number(linkedStock.reorder ?? linkedStock.reorderLevel) || 5)
                   ? "Low"
                   : "In stock";
             const updatedMerch: StockItem = {
               ...linkedStock,
+              stock: nextMerchQty,
               qty: nextMerchQty,
               status: nextStatus,
             };

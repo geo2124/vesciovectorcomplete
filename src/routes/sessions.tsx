@@ -17,6 +17,7 @@ import {
   Stat,
   Table,
   Td,
+  Textarea,
   Th,
   money,
 } from "@/components/kit";
@@ -175,7 +176,7 @@ function SessionsPage() {
   );
 
   // Strictly limited to Practice and Game as required
-  const sessionTypes: SessionItem["kind"][] = ["Practice", "Game"];
+  const sessionTypes: string[] = ["Practice", "Game"];
 
   const selectedBranchObj = useMemo(
     () => rawBranches.find((b) => b.name === (branch || branches[0])),

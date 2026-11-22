@@ -278,12 +278,14 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
     if (!linkedPlayerId) return;
     const player = db.players.find((p) => p.id === linkedPlayerId);
     if (!player) return;
-    const mappedPlayerStatus =
+    const currentStatusStr = player.status as string;
+    const mappedPlayerStatus = (
       medicalStatus === "Injured"
         ? "Injured"
-        : player.status === "Injured"
+        : currentStatusStr === "Injured"
           ? "Active"
-          : player.status;
+          : player.status
+    ) as typeof player.status;
     await patchEntity("players", linkedPlayerId, {
       status: mappedPlayerStatus,
       medicalStatus,

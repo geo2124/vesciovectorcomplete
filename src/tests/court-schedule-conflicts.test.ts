@@ -12,13 +12,29 @@ const makeBranch = (overrides: Partial<Branch> = {}): Branch => ({
   id: "br-1",
   name: "Downtown Arena",
   city: "Beirut",
+  address: "Downtown Beirut",
   courtsCount: 2,
   courts: [
-    { id: "c-1", name: "Court 1", type: "Indoor", status: "Available" },
-    { id: "c-2", name: "Court 2", type: "Indoor", status: "Available" },
+    {
+      id: "c-1",
+      name: "Court 1",
+      contact: "Coach Fadi",
+      phone: "03-000000",
+      type: "Indoor",
+      status: "Available",
+    },
+    {
+      id: "c-2",
+      name: "Court 2",
+      contact: "Coach Fadi",
+      phone: "03-000000",
+      type: "Indoor",
+      status: "Available",
+    },
   ],
   manager: "Coach Fadi",
   phone: "03-000000",
+  teams: 4,
   players: 40,
   status: "Active",
   offDays: [],
@@ -35,11 +51,13 @@ const makeReservation = (overrides: Partial<CourtReservation> = {}): CourtReserv
   endTime: "17:30",
   durationHours: 1.5,
   clientName: "Private Skills Clinic",
-  clientType: "Private Session",
+  clientType: "External Client",
   rateType: "Private Rate",
   unitRate: 45,
+  hourlyRate: 30,
   totalAmount: 45,
   finalTotalAmount: 45,
+  paidAmount: 0,
   paymentStatus: "Pending",
   status: "Confirmed",
   ...overrides,
@@ -168,7 +186,16 @@ describe("checkCourtScheduleConflict & Off Days / Rename Cascade", () => {
     const baseDb = emptyDB();
     const branch = makeBranch({
       name: "New Downtown Hub",
-      courts: [{ id: "c-1", name: "Main Show Court", type: "Indoor", status: "Available" }],
+      courts: [
+        {
+          id: "c-1",
+          name: "Main Show Court",
+          contact: "Coach Fadi",
+          phone: "03-000000",
+          type: "Indoor",
+          status: "Available",
+        },
+      ],
     });
 
     baseDb.branches = [makeBranch()];
@@ -176,7 +203,7 @@ describe("checkCourtScheduleConflict & Off Days / Rename Cascade", () => {
       {
         id: "p-1",
         name: "Rami",
-        gender: "Male",
+        gender: "Boy",
         dob: "2013-01-01",
         category: "U-14",
         teams: ["U-14 Boys"],
@@ -184,6 +211,7 @@ describe("checkCourtScheduleConflict & Off Days / Rename Cascade", () => {
         phone: "",
         parent: "Parent",
         parentPhone: "",
+        school: "Downtown High",
         fee: 100,
         status: "Active",
         balance: 0,

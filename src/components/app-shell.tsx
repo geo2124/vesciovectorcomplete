@@ -1266,25 +1266,27 @@ export function AppShell({
           ) : (
             /* Slim 64px Icon-Only Rail when Unlocked & Not Hovered */
             <>
-              <div className="flex h-16 shrink-0 items-center justify-center border-b border-ink-800">
-                <img
-                  src={currentLogo}
-                  alt={currentAcademy?.name || "Vescio Vector"}
-                  className="h-8 w-8 object-contain"
-                  onError={(e) => {
-                    if (
-                      typeof window !== "undefined" &&
-                      e.currentTarget.src !== window.location.origin + "/vescio-vector-logo.png"
-                    ) {
-                      e.currentTarget.src = "/vescio-vector-logo.png";
-                    }
-                  }}
-                />
+              <div className="flex h-16 w-full shrink-0 flex-col items-center justify-center border-b border-ink-800 px-0">
+                <div className="mx-auto flex h-10 w-10 shrink-0 items-center justify-center rounded-md">
+                  <img
+                    src={currentLogo}
+                    alt={currentAcademy?.name || "Vescio Vector"}
+                    className="h-8 w-8 object-contain"
+                    onError={(e) => {
+                      if (
+                        typeof window !== "undefined" &&
+                        e.currentTarget.src !== window.location.origin + "/vescio-vector-logo.png"
+                      ) {
+                        e.currentTarget.src = "/vescio-vector-logo.png";
+                      }
+                    }}
+                  />
+                </div>
               </div>
 
-              <div className="flex flex-col items-center gap-2 border-b border-ink-800 py-3">
+              <div className="flex w-full shrink-0 flex-col items-center justify-center gap-2 border-b border-ink-800 px-0 py-3">
                 <div
-                  className="grid h-9 w-9 place-items-center overflow-hidden rounded-md bg-ink-850 ring-1 ring-ink-700"
+                  className="mx-auto flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-ink-850 ring-1 ring-ink-700"
                   title={`${currentAcademy.name} (${currentAcademy.url})`}
                 >
                   {currentAcademy?.logo ? (
@@ -1305,7 +1307,7 @@ export function AppShell({
                   to="/up-erp"
                   preload="intent"
                   title="Vescio Nexus"
-                  className={`grid h-9 w-9 place-items-center rounded-md transition-all ${NEXUS_LINK_SURFACE_CLS}`}
+                  className={`mx-auto flex h-10 w-10 shrink-0 items-center justify-center rounded-md transition-all ${NEXUS_LINK_SURFACE_CLS}`}
                 >
                   <VescioNexusIcon className="h-3.5 w-6" />
                 </Link>
@@ -1315,7 +1317,7 @@ export function AppShell({
                     to="/crm"
                     preload="intent"
                     title="CRM & Pipeline"
-                    className={`grid h-9 w-9 place-items-center rounded-md ring-1 transition-all ${
+                    className={`mx-auto flex h-10 w-10 shrink-0 items-center justify-center rounded-md ring-1 transition-all ${
                       isNavActive("/crm", pathname)
                         ? "bg-court-500/20 text-court-400 ring-court-500/50"
                         : "bg-ink-850/90 text-court-400 ring-court-500/30 hover:bg-court-500/15"
@@ -1326,7 +1328,7 @@ export function AppShell({
                 )}
               </div>
 
-              <nav className="flex flex-1 flex-col items-center gap-1 overflow-y-auto py-3">
+              <nav className="flex w-full flex-1 flex-col items-center gap-1 overflow-y-auto px-0 py-3 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                 {visibleGroups.flatMap((g) =>
                   g.items.map((item) => {
                     const active = isNavActive(item.to, pathname);
@@ -1337,7 +1339,7 @@ export function AppShell({
                         to={item.to}
                         preload="intent"
                         title={item.label}
-                        className={`grid h-9 w-9 shrink-0 place-items-center rounded-md transition-colors ${
+                        className={`mx-auto flex h-10 w-10 shrink-0 items-center justify-center rounded-md transition-colors ${
                           active
                             ? "bg-court-500/15 text-court-400 ring-1 ring-court-500/35"
                             : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
@@ -1350,9 +1352,9 @@ export function AppShell({
                 )}
               </nav>
 
-              <div className="flex shrink-0 items-center justify-center border-t border-ink-800 py-3">
+              <div className="flex w-full shrink-0 flex-col items-center justify-center border-t border-ink-800 px-0 py-3">
                 <div
-                  className="grid h-8 w-10 place-items-center rounded-md bg-ink-900 font-mono text-[9px] font-bold uppercase text-court-400 ring-1 ring-ink-800"
+                  className="mx-auto flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-ink-900 font-mono text-[9px] font-bold uppercase text-court-400 ring-1 ring-ink-800"
                   title={`Plan · ${currentAcademy.plan} · Players used ${playersUsedCount}/${playersLimit}`}
                 >
                   {currentAcademy.plan}

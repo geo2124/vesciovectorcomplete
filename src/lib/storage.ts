@@ -149,6 +149,7 @@ export async function uploadDocumentAttachment(
   entityId: string,
   file: File,
   customLabel?: string,
+  customType?: string,
 ): Promise<DocumentAttachment> {
   const safeTenant = tenantId || "donbosco";
   const safeEntityId = entityId || `doc_${Date.now().toString(36)}`;
@@ -162,7 +163,9 @@ export async function uploadDocumentAttachment(
     id: `doc-${timestamp.toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
     name: String(customLabel?.trim() || file.name || "Uploaded Document"),
     type: String(
-      file.type || (file.name?.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg"),
+      customType ||
+        file.type ||
+        (file.name?.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg"),
     ),
     url: String(url || ""),
     uploadedAt: new Date(timestamp).toISOString(),

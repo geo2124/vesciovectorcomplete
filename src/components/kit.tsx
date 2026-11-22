@@ -358,10 +358,15 @@ export function Td({
   );
 }
 
-export function Row({ children, className, ...props }: React.HTMLAttributes<HTMLTableRowElement>) {
+export function Row({
+  children,
+  className,
+  selected,
+  ...props
+}: React.HTMLAttributes<HTMLTableRowElement> & { selected?: boolean | undefined }) {
   return (
     <tr
-      className={`cursor-pointer transition-colors hover:bg-ink-850/60 ${className || ""}`}
+      className={`cursor-pointer transition-colors hover:bg-ink-850/60 ${selected ? "bg-ink-850/80" : ""} ${className || ""}`}
       {...props}
     >
       {children}
@@ -799,6 +804,7 @@ export function EmptyState({
   title,
   description,
   hint,
+  note,
   action,
   className = "",
   asTableRow,
@@ -807,13 +813,14 @@ export function EmptyState({
   title?: ReactNode | undefined;
   description?: ReactNode | undefined;
   hint?: ReactNode | undefined;
+  note?: ReactNode | undefined;
   action?: ReactNode | undefined;
   className?: string | undefined;
   asTableRow?: boolean | undefined;
 }) {
   const inTable = useContext(TableContext);
   const renderAsRow = asTableRow !== undefined ? asTableRow : inTable;
-  const descContent = description ?? hint;
+  const descContent = description ?? hint ?? note;
 
   const content = (
     <div className={`px-4 py-10 text-center font-mono text-[11px] text-ink-400 ${className}`}>

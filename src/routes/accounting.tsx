@@ -665,7 +665,7 @@ function AccountingPage() {
         l.date,
         l.type,
         l.account,
-        l.entry,
+        l.entry || l.description || "",
         String(
           currency === "LBP" ? Math.round(Math.abs(l.amount) * exchangeRate) : Math.abs(l.amount),
         ),
@@ -679,7 +679,13 @@ function AccountingPage() {
     exportPdf(
       "Ledger Report",
       ["Date", "Type", "Account", "Entry", "Amount"],
-      filteredLedger.map((l) => [l.date, l.type, l.account, l.entry, money(Math.abs(l.amount))]),
+      filteredLedger.map((l) => [
+        l.date,
+        l.type,
+        l.account,
+        l.entry || l.description || "",
+        money(Math.abs(l.amount)),
+      ]),
     );
   };
 
@@ -1265,7 +1271,7 @@ function AccountingPage() {
           {(() => {
             const scopedBranches = isBranchScoped
               ? (db.branches || []).filter(
-                  (b) => b.name.toLowerCase() === scopedBranchName.toLowerCase(),
+                  (b) => b.name.toLowerCase() === (userBranch || "").toLowerCase(),
                 )
               : db.branches || [];
             const branchUtilRows = calculateBranchCourtUtilizationAnalytics(
@@ -2392,7 +2398,7 @@ function AccountingPage() {
                       ? (db.branches || []).filter((b) => b.name === reportBranch)
                       : isBranchScoped
                         ? (db.branches || []).filter(
-                            (b) => b.name.toLowerCase() === scopedBranchName.toLowerCase(),
+                            (b) => b.name.toLowerCase() === (userBranch || "").toLowerCase(),
                           )
                         : db.branches || [];
                     const utilRows = calculateBranchCourtUtilizationAnalytics(
@@ -2581,7 +2587,7 @@ function AccountingPage() {
               ? (db.branches || []).filter((b) => b.name === reportBranch)
               : isBranchScoped
                 ? (db.branches || []).filter(
-                    (b) => b.name.toLowerCase() === scopedBranchName.toLowerCase(),
+                    (b) => b.name.toLowerCase() === (userBranch || "").toLowerCase(),
                   )
                 : db.branches || [];
             const branchRows = calculateBranchCourtUtilizationAnalytics(
@@ -2599,7 +2605,7 @@ function AccountingPage() {
               db.branches || [],
               db.coaches || [],
               reportMonth || undefined,
-              reportBranch || (isBranchScoped ? scopedBranchName : undefined),
+              reportBranch || (isBranchScoped ? userBranch : undefined),
             );
 
             return (
@@ -3127,7 +3133,7 @@ function AccountingPage() {
             />
           </Field>
           <Field label="Description">
-            <Input value={form.entry} onChange={(v) => setForm({ ...form, entry: v })} />
+            <Input value={form.entry || ""} onChange={(v) => setForm({ ...form, entry: v })} />
           </Field>
           <Field label="Note (Optional)">
             <Input value={form.note || ""} onChange={(v) => setForm({ ...form, note: v })} />
@@ -3981,7 +3987,7 @@ function AccountingPage() {
               <Button variant="outline" size="sm" onClick={() => setDeletingLedgerEntry(null)}>
                 Cancel
               </Button>
-              <Button variant="bad" size="sm" onClick={confirmDeleteLedgerEntry}>
+              <Button variant="danger" size="sm" onClick={confirmDeleteLedgerEntry}>
                 Confirm & Delete
               </Button>
             </div>

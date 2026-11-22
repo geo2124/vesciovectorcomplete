@@ -3689,7 +3689,7 @@ function PlansTab({ coachId, coachName }: { coachId: string; coachName: string }
       const coachObj = db.coaches.find((c) => c.id === coachId);
       void dispatchNotification({
         title: `Practice Plan Submitted: ${draft.title}`,
-        message: `${coachName} submitted practice plan "${draft.title}" (${draft.ageGroup || "All"}) for review.`,
+        message: `${coachName} submitted practice plan "${draft.title}" (${draft.category || "All"}) for review.`,
         type: "curriculum",
         targetRoles: ["technical_director", "super_admin"],
         targetCoachId: coachId,
@@ -4168,6 +4168,7 @@ function Profile({
   })();
 
   async function handleUploadLicense(file: File) {
+    if (!coach) return;
     if (file.size > 15 * 1024 * 1024) {
       toast.error("File size must be under 15MB");
       return;
@@ -4211,6 +4212,7 @@ function Profile({
   }
 
   function handleSaveProfile() {
+    if (!coach) return;
     update((d) => ({
       ...d,
       coaches: d.coaches.map((c) =>

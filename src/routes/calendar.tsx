@@ -1217,7 +1217,7 @@ function MonthGrid({
                       {ev.branch || "HQ"} · {ev.coach || ev.headCoach || "Unassigned"}
                     </div>
                   </div>
-                  <Chip tone={kindTone[ev.kind] ?? "neutral"}>
+                  <Chip tone={kindTone[ev.kind || ""] ?? "neutral"}>
                     {String(ev.kind || "Event").toUpperCase()}
                   </Chip>
                 </div>
@@ -1328,7 +1328,7 @@ function DayList({
                   {ev.detail} · {ev.coach}
                 </div>
               </div>
-              <Chip tone={kindTone[ev.kind] ?? "neutral"}>
+              <Chip tone={kindTone[ev.kind || ""] ?? "neutral"}>
                 {String(ev.kind || "Event").toUpperCase()}
               </Chip>
             </div>

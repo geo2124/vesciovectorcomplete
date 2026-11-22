@@ -1691,7 +1691,13 @@ function PlayersPage() {
                     .filter((item) => item.eligibility.eligible || item.isAssigned)
                     .sort((a, b) => {
                       if (a.isAssigned !== b.isAssigned) return a.isAssigned ? -1 : 1;
-                      const rank = { exact: 0, younger: 1, older: 2, ineligible: 3 };
+                      const rank = {
+                        exact: 0,
+                        younger: 1,
+                        older: 2,
+                        ineligible: 3,
+                        ineligible_gender: 4,
+                      };
                       return rank[a.eligibility.matchType] - rank[b.eligibility.matchType];
                     });
 
@@ -4559,7 +4565,7 @@ function PlayersPage() {
               <Button variant="outline" size="sm" onClick={() => setDeletingPlayer(null)}>
                 Cancel
               </Button>
-              <Button variant="bad" size="sm" onClick={confirmDeletePlayer}>
+              <Button variant="danger" size="sm" onClick={confirmDeletePlayer}>
                 Confirm & Remove
               </Button>
             </div>

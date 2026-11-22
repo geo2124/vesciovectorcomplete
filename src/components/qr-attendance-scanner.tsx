@@ -370,7 +370,7 @@ export function QrAttendanceScanner({
             verbose: false,
           }) as unknown as typeof scannerRef.current;
         }
-        const decodedText = await tempScanner.scanFile(file, true);
+        const decodedText = await tempScanner!.scanFile(file, true);
         await handleScannedResult(decodedText);
       } catch (fileErr) {
         console.warn("QR file scan failed:", fileErr);
@@ -450,7 +450,7 @@ export function QrAttendanceScanner({
       // Safe cleanup of instance
       try {
         if (scannerRef.current) {
-          await scannerRef.current.clear().catch(() => {});
+          await Promise.resolve(scannerRef.current.clear()).catch(() => {});
         }
       } catch {
         // Suppress cleanup error
@@ -506,6 +506,7 @@ export function QrAttendanceScanner({
       };
     } else {
       stopCamera();
+      return undefined;
     }
   }, [open, activeTab, startCamera, stopCamera]);
 

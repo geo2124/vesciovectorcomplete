@@ -268,6 +268,9 @@ export type Coach = {
   seenFolders?: Record<string, number> | undefined;
   finals?: number | undefined;
   championships?: number | undefined;
+  role?: string | undefined;
+  sessionFee?: number | undefined;
+  transportFee?: number | undefined;
   finalsRecord?:
     | {
         id: string;
@@ -291,8 +294,11 @@ export type Player = {
   dob: string;
   category: string;
   teams: string[];
+  team?: string | undefined;
   branch: string;
   parent: string; // Primary guardian (Guardian 1)
+  parentName?: string | undefined;
+  guardian?: string | undefined;
   parentPhone: string; // Primary guardian phone (Guardian 1)
   guardian2Name?: string | undefined; // Secondary guardian (optional)
   guardian2Phone?: string | undefined; // Secondary guardian phone (optional)
@@ -301,6 +307,7 @@ export type Player = {
   guardianEmail?: string | undefined;
   school: string;
   fee: number;
+  customFee?: number | undefined;
   feeNote?: string | undefined;
   isScholarship?: boolean | undefined;
   discountPercent?: number | undefined;
@@ -343,6 +350,8 @@ export type Player = {
   medicalStatus?: "Fit" | "Limited" | "Injured" | undefined;
   rtpStage?: 1 | 2 | 3 | 4 | 5 | undefined;
   registered?: string | undefined;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  attendance?: any;
 };
 
 export const players: Player[] = [];
@@ -448,6 +457,8 @@ export type Court = {
   enableHalfCourts?: boolean | undefined;
   fullCourtHourlyRate?: number | undefined;
   halfCourtHourlyRate?: number | undefined;
+  type?: string | undefined;
+  status?: string | undefined;
 };
 
 export type CourtRateType = "Half Court Rate" | "Full Court Rate" | "Private Rate" | "Academy Rate";
@@ -466,7 +477,7 @@ export type BranchOffDay = {
   date: string;
   reason: string;
   createdBy?: string | undefined;
-  createdAt: string;
+  createdAt?: string | undefined;
 };
 
 export type Branch = {
@@ -477,6 +488,7 @@ export type Branch = {
   manager: string;
   phone?: string | undefined;
   email?: string | undefined;
+  status?: string | undefined;
   rentalType?: "Per session" | "Fixed amount" | undefined;
   rentalRate?: number | undefined;
   courtsCount?: number | undefined;
@@ -529,7 +541,8 @@ export type CourtAllocationType = "Full Court" | "Half Court - HCA" | "Half Cour
 
 export type SessionItem = {
   id: string;
-  kind: "Practice" | "Game" | "Seminar" | "Camp" | string;
+  kind?: "Practice" | "Game" | "Seminar" | "Camp" | string | undefined;
+  type?: string | undefined;
   title: string;
   detail: string;
   venue?: string | undefined;
@@ -581,6 +594,7 @@ export type SessionItem = {
   assistantAttendance?: "Present" | "Absent" | "Excused" | undefined;
   referees?: MatchOfficial[] | undefined;
   matchStaff?: MatchOfficial[] | undefined;
+  attendees?: string[] | undefined;
 };
 
 export const sessions: SessionItem[] = [];
@@ -616,7 +630,10 @@ export type StockItem = {
   variant: string;
   variants?: MerchVariant[] | undefined;
   stock: number;
+  qty?: number | undefined;
   reorder: number;
+  reorderLevel?: number | undefined;
+  status?: "In stock" | "Low" | "Out of stock" | string | undefined;
   costPrice?: number;
   sellingPrice?: number;
   price: number;
@@ -663,14 +680,23 @@ export interface LedgerEntry {
   category?: string | undefined;
   entry?: string | undefined;
   description?: string | undefined;
+  memo?: string | undefined;
   type: "Revenue" | "Expense" | "debit" | "credit";
   amount: number;
   status: "Collected" | "Paid" | "Pending";
+  paymentMethod?: string | undefined;
   branch?: string | undefined;
   note?: string | undefined;
   attachment?: string | undefined;
   coachId?: string | undefined;
   staffId?: string | undefined;
+  playerId?: string | undefined;
+  orderId?: string | undefined;
+  insuranceCompanyId?: string | undefined;
+  insuranceCompanyName?: string | undefined;
+  familyPlayerIds?: string[] | undefined;
+  familyPaymentAllocations?: Record<string, number> | undefined;
+  familySettledInvoiceIds?: string[] | undefined;
   period?: string | undefined;
   referenceId?: string | undefined;
   isAdvance?: boolean | undefined;
@@ -749,6 +775,11 @@ export type Workshop = {
   handoutUrl?: string | undefined;
   handoutName?: string | undefined;
   documents?: DocumentAttachment[] | undefined;
+  attendeeIds?: string[] | undefined;
+  status?: string | undefined;
+  location?: string | undefined;
+  presenter?: string | undefined;
+  description?: string | undefined;
 };
 
 export const workshops: Workshop[] = [];
@@ -759,20 +790,24 @@ export type Invoice = {
   playerId: string;
   playerName: string;
   playerBranch?: string;
+  branch?: string;
   team?: string;
   programTier?: string;
   billingMonth: string; // e.g. "May", "June", "September"
   month: string; // "01" through "12"
   year: number;
   amount: number;
+  netAmount?: number;
   status: "pending" | "paid" | "overdue" | "cancelled";
   issuedDate: string;
+  issueDate?: string;
   dueDate: string;
-  description: string;
+  description?: string;
   paidAmount?: number;
   paidDate?: string;
   paymentMethod?: string;
   notes?: string;
+  createdAt?: string;
 };
 
 export const invoices: Invoice[] = [];
@@ -832,10 +867,13 @@ export const DEFAULT_CRM_SETTINGS: CrmSettings = {
 
 export interface CrmCommunicationEntry {
   id: string;
-  channel: "Call" | "WhatsApp" | "Email" | "In-Person";
-  summary: string;
-  author: string;
-  createdAt: string;
+  channel?: "Call" | "WhatsApp" | "Email" | "In-Person" | string | undefined;
+  type?: string | undefined;
+  summary?: string | undefined;
+  note?: string | undefined;
+  author?: string | undefined;
+  createdAt?: string | undefined;
+  timestamp?: string | undefined;
 }
 
 export interface CrmReminderItem {
@@ -857,6 +895,7 @@ export type CrmLead = {
   preferredBranch: string;
   preferredPosition?: string | undefined;
   leadSource?: string | undefined;
+  source?: string | undefined;
   parentName: string;
   parentPhone: string;
   parentEmail?: string | undefined;
@@ -868,6 +907,7 @@ export type CrmLead = {
   trialSessionId?: string | undefined;
   trialSessionTitle?: string | undefined;
   trialSessionDate?: string | undefined;
+  trialDate?: string | undefined;
   trialTeam?: string | undefined;
   trialEvaluationNotes?: string | undefined;
   trialRating?: string | undefined;
@@ -884,8 +924,12 @@ export type CrmLead = {
   churnReason?: string | undefined;
   reEngagementNotes?: string | undefined;
   churnedAt?: string | undefined;
+  convertedAt?: string | undefined;
   retentionCategory?:
     "Parent Check-In" | "Gear / Uniform Upsell" | "Camp Invite" | "Feedback Log" | undefined;
+  aftersalesCategory?: string | undefined;
+  campInviteStatus?: string | undefined;
+  gearUpsellNotes?: string | undefined;
   upsellItems?: string | undefined;
   campName?: string | undefined;
   feedbackLog?: string | undefined;
@@ -907,7 +951,7 @@ export type CourtReservation = {
   clientType: "External Client" | "Academy Player" | "Academy Team" | "Corporate / Club";
   linkedPlayerId?: string | undefined;
   linkedTeamName?: string | undefined;
-  phone: string;
+  phone?: string | undefined;
   email?: string | undefined;
   branch: string;
   court: string;
@@ -918,6 +962,7 @@ export type CourtReservation = {
   durationHours: number;
   // Snapshot-Protected Rate Engine Fields
   rateType?: CourtRateType | undefined;
+  unitRate?: number | undefined;
   snapshotUnitRate?: number | undefined;
   snapshotExtraPlayerRate?: number | undefined;
   playerCount?: number | undefined;
@@ -927,6 +972,7 @@ export type CourtReservation = {
   discountFixedAmount?: number | undefined;
   hourlyRate: number;
   totalAmount: number;
+  finalTotalAmount?: number | undefined;
   paidAmount: number;
   paymentStatus: "Paid" | "Pending" | "Partial" | "Charged to Account" | "Free Pass";
   paymentMethod?: "Cash" | "Card" | "Bank Transfer" | "Wish / OMT" | "Account Charge" | undefined;
@@ -946,7 +992,7 @@ export type CourtReservation = {
   cashedInBy?: string | undefined;
   ledgerEntryId?: string | undefined;
   notes?: string | undefined;
-  createdAt: string;
+  createdAt?: string | undefined;
   updatedAt?: string | undefined;
 };
 

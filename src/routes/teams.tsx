@@ -1269,7 +1269,13 @@ function TeamsPage() {
           const eligibleAvailable = evaluatedUnassigned
             .filter((item) => item.eligibility.eligible)
             .sort((a, b) => {
-              const rank = { exact: 0, younger: 1, older: 2, ineligible: 3 };
+              const rank = {
+                exact: 0,
+                younger: 1,
+                older: 2,
+                ineligible: 3,
+                ineligible_gender: 4,
+              };
               return rank[a.eligibility.matchType] - rank[b.eligibility.matchType];
             });
 

@@ -1212,7 +1212,7 @@ function GameApproval() {
                 <Detail label="Branch" value={game.branch} />
                 <Detail label="Submitted by" value={game.coach} />
                 <Detail label="Status" value={game.status} />
-                <Detail label="Type" value={game.gameType || game.kind} />
+                <Detail label="Type" value={game.gameType || game.kind || "Game"} />
                 {game.score && <Detail label="Final Score" value={game.score} />}
               </div>
 
@@ -2222,7 +2222,9 @@ function WorkshopsTab() {
                     const attachmentItem = {
                       id: `doc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
                       name: String(res.name || file.name || "Workshop Handout"),
-                      type: String(res.type || file.type || "application/pdf"),
+                      type: String(
+                        (res as { type?: string }).type || file.type || "application/pdf",
+                      ),
                       url: String(res.url || ""),
                       uploadedAt: new Date().toISOString().slice(0, 10),
                       size: Number(res.size || file.size || 0),

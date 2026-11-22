@@ -9,15 +9,15 @@ const makeTeam = (overrides: Partial<Team> = {}): Team => ({
   id: "team-u14-boys",
   name: "U-14 Boys Elite",
   category: "U-14",
-  gender: "Male",
+  gender: "Boys",
+  headCoach: "Coach Karim",
   coach: "Coach Karim",
   assistant: "Coach Hadi",
   branch: "Downtown Arena",
   players: 10,
-  cap: 15,
-  days: "Mon / Wed / Fri",
-  time: "17:00",
-  court: "Court 1",
+  wins: 5,
+  losses: 2,
+  monthlyFee: 100,
   allowYoungerPlayers: false,
   allowOlderPlayers: false,
   ...overrides,
@@ -103,8 +103,8 @@ describe("evaluateTeamEligibilityForDob", () => {
   });
 
   it("enforces gender matching for Male/Female squads while allowing Co-Ed (Mixed) squads for all genders", () => {
-    const boysTeam = makeTeam({ gender: "Male" });
-    const girlsTeam = makeTeam({ gender: "Female" });
+    const boysTeam = makeTeam({ gender: "Boys" });
+    const girlsTeam = makeTeam({ gender: "Girls" });
     const mixedTeam = makeTeam({ gender: "Mixed" });
 
     const femaleOnBoys = evaluateTeamEligibilityForDob(

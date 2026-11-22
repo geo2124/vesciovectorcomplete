@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   Building2,
@@ -9,6 +9,8 @@ import {
   HeartPulse,
   Layers,
   MapPin,
+  Maximize2,
+  Minimize2,
   Settings,
   ShoppingCart,
   Sparkles,
@@ -82,6 +84,13 @@ function VescioNexusHub() {
 
   const [activeModule, setActiveModule] = useState<VescioNexusModuleTab>("hub");
   const [branchFilter, setBranchFilter] = useState<string>("All");
+  const [isFullScreen, setIsFullScreen] = useState(false);
+
+  const isLaunchedModule =
+    activeModule === "courts" ||
+    activeModule === "gym" ||
+    activeModule === "physio" ||
+    activeModule === "pos";
 
   const branches = useMemo(() => db.branches || [], [db.branches]);
   const players = useMemo(() => db.players || [], [db.players]);
@@ -219,10 +228,62 @@ function VescioNexusHub() {
   // =========================================================================
   const ecosystemKpis = useMemo(() => {
     const today = todayISO();
+    const activeReservations = filteredReservations.filter((r) => r.status !== "Cancelled");
+    const activeGymMembers = filteredGymMembers.filter((m) => m.status === "Active");
+    const activeGymCount = activeGymMembers.length;
+    const activeRehabCases = filteredPhysioRecords.filter(
+      (r) => r.caseStatus !== "Discharged" && (r.medicalStatus !== "Fit" || r.rtpStage < 5),
+    ).length;
+    const todayCompletedPosTxs = filteredPosTransactions.filter(
+      (tx) => tx.date === today && tx.status === "Completed",
+    );
+    const todayPosSales = todayCompletedPosTxs.reduce(
+      (sum, tx) => sum + (Number(tx.total) || 0),
+      0,
+    );
+
+    // Fast path: skip heavy Overview-only 14-day projections & feed aggregations when a specific module is active
+    if (activeModule !== "hub") {
+      return {
+        today,
+        todayTotalNexusRevenue: 0,
+        todayCourtRevenue: 0,
+        todayGymRevenue: 0,
+        todayPhysioRevenue: 0,
+        todayPosSales,
+        todayPosTxCount: todayCompletedPosTxs.length,
+        totalPosSales: 0,
+        activeReservationsCount: activeReservations.length,
+        todayCourtBookingsCount: 0,
+        todayFullCourtCount: 0,
+        todayHcaCount: 0,
+        todayHcbCount: 0,
+        totalConfiguredCourts: 1,
+        courtUtilizationPct: 0,
+        courtRevenueCollected: 0,
+        courtPendingReceivables: 0,
+        activeGymCount,
+        activeCoachPoolsCount: 0,
+        todayGymCheckIns: 0,
+        gymMonthlyRevenue: 0,
+        injuredOrLimitedPlayers: 0,
+        activeRehabCases,
+        todayPhysioApptsCount: 0,
+        totalPhysioRooms: 1,
+        physioRoomUtilizationPct: 0,
+        lowStockAlertsCount: 0,
+        todayCourtBookings: [],
+        upcomingCourtBookings: [],
+        unifiedTodayPhysioSessions: [],
+        expiringGymPackages: [],
+        lowStockPosItems: [],
+        activeOffDays: [],
+      };
+    }
+
     const sevenDaysOut = addDaysToIso(today, 7);
 
     // 1. COURTS & FACILITY RESERVATIONS METRICS (including active Continuous Weekly projections)
-    const activeReservations = filteredReservations.filter((r) => r.status !== "Cancelled");
     const todayCourtBookings = projectCourtReservationsForDate(today, activeReservations, {
       branchFilter,
       branches: scopedBranches,
@@ -305,9 +366,6 @@ function VescioNexusHub() {
       .sort((a, b) => a.date.localeCompare(b.date));
 
     // 2. GYM & STRENGTH METRICS
-    const activeGymMembers = filteredGymMembers.filter((m) => m.status === "Active");
-    const activeGymCount = activeGymMembers.length;
-
     const scopedGymCoaches = scopedBranches.flatMap((b) => b.gymCoaches || []);
     const activeCoachPoolsCount = scopedGymCoaches.filter(
       (c) => c.isClientEnabled && (c.sessionsRemaining || 0) > 0,
@@ -372,9 +430,6 @@ function VescioNexusHub() {
     );
     const injuredOrLimitedPlayers = scopedPlayers.filter(
       (p) => p.medicalStatus === "Injured" || p.medicalStatus === "Limited",
-    ).length;
-    const activeRehabCases = filteredPhysioRecords.filter(
-      (r) => r.caseStatus !== "Discharged" && (r.medicalStatus !== "Fit" || r.rtpStage < 5),
     ).length;
 
     const branchPhysioAppointments = scopedBranches
@@ -473,13 +528,6 @@ function VescioNexusHub() {
     );
 
     // 4. KIOSK POS & INVENTORY METRICS
-    const todayCompletedPosTxs = filteredPosTransactions.filter(
-      (tx) => tx.date === today && tx.status === "Completed",
-    );
-    const todayPosSales = todayCompletedPosTxs.reduce(
-      (sum, tx) => sum + (Number(tx.total) || 0),
-      0,
-    );
     const todayPosTxCount = todayCompletedPosTxs.length;
     const totalPosSales = filteredPosTransactions
       .filter((tx) => tx.status === "Completed")
@@ -537,6 +585,7 @@ function VescioNexusHub() {
       activeOffDays,
     };
   }, [
+    activeModule,
     filteredReservations,
     filteredGymMembers,
     filteredPhysioRecords,
@@ -548,8 +597,17 @@ function VescioNexusHub() {
     branchFilter,
   ]);
 
-  // Daily Register Summary for POS
+  // Daily Register Summary for POS (computed only on Overview Hub)
   const posDailyRegister = useMemo(() => {
+    if (activeModule !== "hub") {
+      return {
+        count: 0,
+        cashTotal: 0,
+        cardTotal: 0,
+        accountChargeTotal: 0,
+        grandTotal: 0,
+      };
+    }
     const today = todayISO();
     const todayTxs = filteredPosTransactions.filter(
       (t) => t.date === today && t.status === "Completed",
@@ -576,7 +634,7 @@ function VescioNexusHub() {
       accountChargeTotal: Math.round(accountChargeTotal * 100) / 100,
       grandTotal: Math.round((cashTotal + cardTotal + accountChargeTotal) * 100) / 100,
     };
-  }, [filteredPosTransactions]);
+  }, [activeModule, filteredPosTransactions]);
 
   // =========================================================================
   // NEXUS BRANCHES MANAGEMENT STATE & CRUD
@@ -850,318 +908,599 @@ function VescioNexusHub() {
     "all" | "courts" | "physio" | "gym" | "pos" | "offdays"
   >("all");
 
+  // Exit Full Screen when pressing Escape (only when no modal dialog is open)
+  useEffect(() => {
+    if (!isFullScreen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (branchModalOpen || gymModalOpen || physioIntakeOpen) return;
+      const openModalEl = document.querySelector(
+        '[role="dialog"], [aria-modal="true"], .fixed.inset-0.z-50:not([data-nexus-fullscreen="true"])',
+      );
+      if (openModalEl) return;
+      setIsFullScreen(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isFullScreen, branchModalOpen, gymModalOpen, physioIntakeOpen]);
+
+  // Reset full-screen mode if returning to Overview or Branches
+  useEffect(() => {
+    if (!isLaunchedModule && isFullScreen) {
+      setIsFullScreen(false);
+    }
+  }, [isLaunchedModule, isFullScreen]);
+
+  const activeModuleMeta = useMemo(() => {
+    switch (activeModule) {
+      case "courts":
+        return {
+          title: "Court & Facility Reservations",
+          shortTitle: "Courts",
+          icon: Calendar,
+          badgeTone: "bg-court-500/20 text-court-300 ring-court-500/40",
+        };
+      case "gym":
+        return {
+          title: "Gym & Strength",
+          shortTitle: "Gym",
+          icon: Dumbbell,
+          badgeTone: "bg-sky-500/20 text-sky-300 ring-sky-500/40",
+        };
+      case "physio":
+        return {
+          title: "Physiotherapy & Medical",
+          shortTitle: "Physio",
+          icon: HeartPulse,
+          badgeTone: "bg-rose-500/20 text-rose-300 ring-rose-500/40",
+        };
+      case "pos":
+        return {
+          title: "Kiosk POS",
+          shortTitle: "POS",
+          icon: ShoppingCart,
+          badgeTone: "bg-amber-500/20 text-amber-300 ring-amber-500/40",
+        };
+      default:
+        return {
+          title: "Vescio Nexus Overview",
+          shortTitle: "Overview",
+          icon: Layers,
+          badgeTone: "bg-emerald-500/20 text-emerald-300 ring-emerald-500/40",
+        };
+    }
+  }, [activeModule]);
+
+  const ActiveModuleIcon = activeModuleMeta.icon;
+
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-ink-950 text-ink-100 flex flex-col">
+    <div
+      data-nexus-fullscreen={isFullScreen && isLaunchedModule ? "true" : undefined}
+      className={
+        isFullScreen && isLaunchedModule
+          ? "fixed inset-0 z-50 bg-background bg-ink-950 text-ink-100 overflow-y-auto overflow-x-hidden flex flex-col"
+          : "min-h-screen w-full max-w-full overflow-x-hidden bg-ink-950 text-ink-100 flex flex-col"
+      }
+    >
       {/* =================================================================== */}
-      {/* STANDALONE VESCIO NEXUS PERSISTENT TOP HEADER BAR                   */}
+      {/* TOP HEADER BAR:                                                     */}
+      {/* 1) Standalone Full-Screen Minimal Sticky Bar                        */}
+      {/* 2) Compact Single-Row Module Top Bar (when a module is active)      */}
+      {/* 3) Full Overview Hub Header (when on Overview / Branches)           */}
       {/* =================================================================== */}
-      <header className="sticky top-0 z-30 w-full max-w-full border-b border-ink-800 bg-ink-950/95 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-3 lg:px-8">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <div className="grid h-9 w-11 shrink-0 place-items-center rounded-lg bg-emerald-500/10 ring-1 ring-emerald-500/30">
-              <VescioNexusIcon className="h-4 w-7" />
+      {isFullScreen && isLaunchedModule ? (
+        <header className="sticky top-0 z-30 w-full max-w-full border-b border-ink-800 bg-ink-950/95 backdrop-blur">
+          <div className="mx-auto flex w-full max-w-[1600px] flex-wrap items-center justify-between gap-2.5 px-4 py-2 lg:px-8">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <div
+                className={`grid h-8 w-8 shrink-0 place-items-center rounded-md ring-1 ${activeModuleMeta.badgeTone}`}
+              >
+                <ActiveModuleIcon className="h-4 w-4" />
+              </div>
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="truncate font-display text-sm font-semibold tracking-tight text-ink-100">
+                  {activeModuleMeta.title}
+                </span>
+                <span className="hidden sm:inline-flex rounded bg-emerald-500/15 px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-emerald-300 ring-1 ring-emerald-500/30">
+                  Standalone Full Screen
+                </span>
+              </div>
             </div>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-display text-base font-semibold tracking-tight text-ink-100">
-                  Nexus
+
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              {/* Active Branch Selector */}
+              <div className="flex items-center gap-1.5 rounded-md bg-ink-900 px-2.5 py-1 ring-1 ring-ink-800">
+                <Building2 className="h-3.5 w-3.5 shrink-0 text-court-400" />
+                <span className="hidden sm:inline font-mono text-[10px] uppercase tracking-wider text-ink-400">
+                  Branch:
                 </span>
-                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-emerald-300 ring-1 ring-emerald-500/30">
-                  MULTI-BRANCH HUB
+                <select
+                  value={branchFilter}
+                  onChange={(e) => setBranchFilter(e.target.value)}
+                  aria-label="Full Screen Nexus Branch Selector"
+                  className="bg-transparent font-mono text-xs font-semibold text-ink-100 focus:outline-none"
+                >
+                  <option value="All" className="bg-ink-900">
+                    All Branches ({branches.length})
+                  </option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.name} className="bg-ink-900">
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsFullScreen(false)}
+                title="Exit Full Screen (Esc)"
+                className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/20 px-3 py-1.5 font-mono text-xs font-bold text-emerald-200 ring-1 ring-emerald-500/40 transition-all hover:bg-emerald-500/30"
+              >
+                <Minimize2 className="h-3.5 w-3.5 shrink-0" />
+                <span>Exit Full Screen / Back to Nexus</span>
+              </button>
+            </div>
+          </div>
+        </header>
+      ) : isLaunchedModule ? (
+        /* COMPACT SLIM SINGLE-ROW MODULE TOP BAR (No tall hero header) */
+        <header className="sticky top-0 z-30 w-full max-w-full border-b border-ink-800 bg-ink-950/95 backdrop-blur">
+          <div className="mx-auto flex w-full max-w-[1600px] flex-nowrap items-center justify-between gap-2 overflow-x-auto px-4 py-2 lg:px-8">
+            <div className="flex shrink-0 items-center gap-1.5">
+              {/* Quick <- Overview Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsFullScreen(false);
+                  setActiveModule("hub");
+                }}
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-ink-900 px-2.5 py-1.5 font-mono text-xs font-semibold text-emerald-300 ring-1 ring-emerald-500/35 transition-all hover:bg-emerald-500/15"
+              >
+                <ArrowLeft className="h-3.5 w-3.5 shrink-0" />
+                <span>Overview</span>
+              </button>
+
+              <div className="mx-1 h-4 w-px bg-ink-800" />
+
+              {/* Compact Module Switcher Tabs */}
+              <button
+                type="button"
+                onClick={() => setActiveModule("courts")}
+                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
+                  activeModule === "courts"
+                    ? "bg-court-500/20 text-court-300 ring-1 ring-court-500/40"
+                    : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
+                }`}
+              >
+                <Calendar className="h-3.5 w-3.5 shrink-0" />
+                <span>Courts</span>
+                <span className="rounded bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-court-300">
+                  {ecosystemKpis.activeReservationsCount}
                 </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveModule("gym")}
+                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
+                  activeModule === "gym"
+                    ? "bg-sky-500/20 text-sky-300 ring-1 ring-sky-500/40"
+                    : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
+                }`}
+              >
+                <Dumbbell className="h-3.5 w-3.5 shrink-0" />
+                <span>Gym</span>
+                <span className="rounded bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-sky-300">
+                  {ecosystemKpis.activeGymCount}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveModule("physio")}
+                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
+                  activeModule === "physio"
+                    ? "bg-rose-500/20 text-rose-300 ring-1 ring-rose-500/40"
+                    : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
+                }`}
+              >
+                <HeartPulse className="h-3.5 w-3.5 shrink-0" />
+                <span>Physio</span>
+                <span className="rounded bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-rose-300">
+                  {ecosystemKpis.activeRehabCases}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveModule("pos")}
+                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
+                  activeModule === "pos"
+                    ? "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40"
+                    : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
+                }`}
+              >
+                <ShoppingCart className="h-3.5 w-3.5 shrink-0" />
+                <span>Kiosk POS</span>
+                <span className="rounded bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-amber-300">
+                  {money(ecosystemKpis.todayPosSales)}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsFullScreen(false);
+                  setActiveModule("branches");
+                }}
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1.5 font-mono text-xs text-ink-300 transition-all hover:bg-ink-850 hover:text-ink-100"
+              >
+                <Building2 className="h-3.5 w-3.5 shrink-0 text-purple-400" />
+                <span>Branches ({branches.length})</span>
+              </button>
+            </div>
+
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              {/* Branch Filter */}
+              <div className="flex items-center gap-1.5 rounded-md bg-ink-900 px-2.5 py-1 ring-1 ring-ink-800">
+                <Building2 className="h-3.5 w-3.5 shrink-0 text-court-400" />
+                <span className="hidden xl:inline font-mono text-[10px] uppercase tracking-wider text-ink-400">
+                  Branch:
+                </span>
+                <select
+                  value={branchFilter}
+                  onChange={(e) => setBranchFilter(e.target.value)}
+                  aria-label="Global Nexus Branch Selector"
+                  className="bg-transparent font-mono text-xs font-semibold text-ink-100 focus:outline-none"
+                >
+                  <option value="All" className="bg-ink-900">
+                    All Branches ({branches.length})
+                  </option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.name} className="bg-ink-900">
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
               </div>
-              <div className="truncate font-mono text-[10px] text-ink-400">
-                Synced with {db.academy?.name || "Vescio Vector"} Roster, Courts, Stock &amp; Ledger
+
+              {/* Standalone / Full-Screen Toggle Button */}
+              <button
+                type="button"
+                onClick={() => setIsFullScreen(true)}
+                title="Launch Standalone Full-Screen Mode"
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-ink-900 px-2.5 py-1.5 font-mono text-xs font-semibold text-emerald-300 ring-1 ring-emerald-500/35 transition-all hover:bg-emerald-500/15"
+              >
+                <Maximize2 className="h-3.5 w-3.5 shrink-0" />
+                <span>Full Screen</span>
+              </button>
+
+              <Link
+                to="/"
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-court-500 px-2.5 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wider text-ink-950 shadow-sm ring-1 ring-court-400 transition-all hover:bg-court-400"
+              >
+                <ArrowLeft className="h-3.5 w-3.5 stroke-[2.5]" />
+                <span className="hidden sm:inline">Back to Vector</span>
+              </Link>
+            </div>
+          </div>
+        </header>
+      ) : (
+        /* FULL OVERVIEW HUB HEADER (Rendered only on Overview / Branches) */
+        <header className="sticky top-0 z-30 w-full max-w-full border-b border-ink-800 bg-ink-950/95 backdrop-blur">
+          <div className="mx-auto flex w-full max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-3 lg:px-8">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <div className="grid h-9 w-11 shrink-0 place-items-center rounded-lg bg-emerald-500/10 ring-1 ring-emerald-500/30">
+                <VescioNexusIcon className="h-4 w-7" />
               </div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-display text-base font-semibold tracking-tight text-ink-100">
+                    Nexus
+                  </span>
+                  <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider text-emerald-300 ring-1 ring-emerald-500/30">
+                    MULTI-BRANCH HUB
+                  </span>
+                </div>
+                <div className="truncate font-mono text-[10px] text-ink-400">
+                  Synced with {db.academy?.name || "Vescio Vector"} Roster, Courts, Stock &amp;
+                  Ledger
+                </div>
+              </div>
+            </div>
+
+            <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
+              {/* Global Vescio Nexus Branch Selector Dropdown */}
+              <div className="flex items-center gap-2 rounded-md bg-ink-900 px-2.5 py-1.5 ring-1 ring-ink-800">
+                <Building2 className="h-3.5 w-3.5 shrink-0 text-court-400" />
+                <span className="font-mono text-[10px] uppercase tracking-wider text-ink-400">
+                  Nexus Branch:
+                </span>
+                <select
+                  value={branchFilter}
+                  onChange={(e) => setBranchFilter(e.target.value)}
+                  aria-label="Global Nexus Branch Selector"
+                  className="bg-transparent font-mono text-xs font-semibold text-ink-100 focus:outline-none"
+                >
+                  <option value="All" className="bg-ink-900">
+                    All Branches ({branches.length})
+                  </option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.name} className="bg-ink-900">
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setActiveModule("branches")}
+                className="inline-flex items-center gap-1.5 rounded-md bg-ink-900 px-2.5 py-1.5 font-mono text-xs font-semibold text-court-300 ring-1 ring-court-500/30 hover:bg-court-500/15"
+                title="Configure Nexus Branches, Courts, Gym Capacity, Physio Rooms & POS Registers"
+              >
+                <Settings className="h-3.5 w-3.5 text-court-400" />
+                <span>Nexus Branches ({branches.length})</span>
+              </button>
+
+              {activeModule !== "hub" && (
+                <button
+                  type="button"
+                  onClick={() => setActiveModule("hub")}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-ink-850 px-3 py-1.5 font-mono text-xs text-ink-200 ring-1 ring-ink-700 hover:bg-ink-800 hover:text-ink-100"
+                >
+                  <Layers className="h-3.5 w-3.5 text-emerald-400" />
+                  <span>Vescio Nexus Home</span>
+                </button>
+              )}
             </div>
           </div>
 
-          <div className="ml-auto flex min-w-0 flex-wrap items-center gap-2">
-            {/* Global Vescio Nexus Branch Selector Dropdown */}
-            <div className="flex items-center gap-2 rounded-md bg-ink-900 px-2.5 py-1.5 ring-1 ring-ink-800">
-              <Building2 className="h-3.5 w-3.5 shrink-0 text-court-400" />
-              <span className="font-mono text-[10px] uppercase tracking-wider text-ink-400">
-                Nexus Branch:
-              </span>
-              <select
-                value={branchFilter}
-                onChange={(e) => setBranchFilter(e.target.value)}
-                aria-label="Global Nexus Branch Selector"
-                className="bg-transparent font-mono text-xs font-semibold text-ink-100 focus:outline-none"
-              >
-                <option value="All" className="bg-ink-900">
-                  All Branches ({branches.length})
-                </option>
-                {branches.map((b) => (
-                  <option key={b.id} value={b.name} className="bg-ink-900">
-                    {b.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setActiveModule("branches")}
-              className="inline-flex items-center gap-1.5 rounded-md bg-ink-900 px-2.5 py-1.5 font-mono text-xs font-semibold text-court-300 ring-1 ring-court-500/30 hover:bg-court-500/15"
-              title="Configure Nexus Branches, Courts, Gym Capacity, Physio Rooms & POS Registers"
-            >
-              <Settings className="h-3.5 w-3.5 text-court-400" />
-              <span>Nexus Branches ({branches.length})</span>
-            </button>
-
-            {activeModule !== "hub" && (
+          {/* Module Navigation Sub-Bar (Compact Single-Row with Back to Vector on Far Right) */}
+          <div className="w-full max-w-full border-t border-ink-800/80 bg-ink-900/60">
+            <div className="mx-auto flex w-full max-w-[1600px] flex-nowrap items-center gap-1.5 overflow-x-auto px-4 py-2 lg:px-8">
               <button
                 type="button"
                 onClick={() => setActiveModule("hub")}
-                className="inline-flex items-center gap-1.5 rounded-md bg-ink-850 px-3 py-1.5 font-mono text-xs text-ink-200 ring-1 ring-ink-700 hover:bg-ink-800 hover:text-ink-100"
+                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
+                  activeModule === "hub"
+                    ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40"
+                    : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
+                }`}
               >
-                <Layers className="h-3.5 w-3.5 text-emerald-400" />
-                <span>Vescio Nexus Home</span>
+                <Layers className="h-3.5 w-3.5 shrink-0" />
+                <span>Nexus Overview</span>
               </button>
-            )}
+
+              <button
+                type="button"
+                onClick={() => setActiveModule("branches")}
+                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
+                  activeModule === "branches"
+                    ? "bg-purple-500/20 text-purple-300 ring-1 ring-purple-500/40"
+                    : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
+                }`}
+              >
+                <Building2 className="h-3.5 w-3.5 shrink-0" />
+                <span>Branches</span>
+                <span className="rounded bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-purple-300">
+                  {branches.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveModule("courts")}
+                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
+                  activeModule === "courts"
+                    ? "bg-court-500/20 text-court-300 ring-1 ring-court-500/40"
+                    : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
+                }`}
+              >
+                <Calendar className="h-3.5 w-3.5 shrink-0" />
+                <span>Court Reservation</span>
+                <span className="rounded bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-court-300">
+                  {ecosystemKpis.activeReservationsCount}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveModule("gym")}
+                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
+                  activeModule === "gym"
+                    ? "bg-sky-500/20 text-sky-300 ring-1 ring-sky-500/40"
+                    : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
+                }`}
+              >
+                <Dumbbell className="h-3.5 w-3.5 shrink-0" />
+                <span>Gym</span>
+                <span className="rounded bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-sky-300">
+                  {ecosystemKpis.activeGymCount}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveModule("physio")}
+                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
+                  activeModule === "physio"
+                    ? "bg-rose-500/20 text-rose-300 ring-1 ring-rose-500/40"
+                    : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
+                }`}
+              >
+                <HeartPulse className="h-3.5 w-3.5 shrink-0" />
+                <span>Physiotherapy</span>
+                <span className="rounded bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-rose-300">
+                  {ecosystemKpis.activeRehabCases}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveModule("pos")}
+                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
+                  activeModule === "pos"
+                    ? "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40"
+                    : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
+                }`}
+              >
+                <ShoppingCart className="h-3.5 w-3.5 shrink-0" />
+                <span>Kiosk POS</span>
+                <span className="rounded bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-amber-300">
+                  {money(ecosystemKpis.todayPosSales)}
+                </span>
+              </button>
+
+              <Link
+                to="/"
+                className="ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-court-500 px-3 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wider text-ink-950 shadow-sm ring-1 ring-court-400 transition-all hover:bg-court-400"
+              >
+                <ArrowLeft className="h-3.5 w-3.5 stroke-[2.5]" />
+                <span>Back to Vector</span>
+              </Link>
+            </div>
           </div>
-        </div>
-
-        {/* Module Navigation Sub-Bar (Compact Single-Row with Back to Vector on Far Right) */}
-        <div className="w-full max-w-full border-t border-ink-800/80 bg-ink-900/60">
-          <div className="mx-auto flex w-full max-w-[1600px] flex-nowrap items-center gap-1.5 overflow-x-auto px-4 py-2 lg:px-8">
-            <button
-              type="button"
-              onClick={() => setActiveModule("hub")}
-              className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
-                activeModule === "hub"
-                  ? "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40"
-                  : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
-              }`}
-            >
-              <Layers className="h-3.5 w-3.5 shrink-0" />
-              <span>Nexus Overview</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveModule("branches")}
-              className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
-                activeModule === "branches"
-                  ? "bg-purple-500/20 text-purple-300 ring-1 ring-purple-500/40"
-                  : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
-              }`}
-            >
-              <Building2 className="h-3.5 w-3.5 shrink-0" />
-              <span>Branches</span>
-              <span className="rounded bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-purple-300">
-                {branches.length}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveModule("courts")}
-              className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
-                activeModule === "courts"
-                  ? "bg-court-500/20 text-court-300 ring-1 ring-court-500/40"
-                  : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
-              }`}
-            >
-              <Calendar className="h-3.5 w-3.5 shrink-0" />
-              <span>Court Reservation</span>
-              <span className="rounded bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-court-300">
-                {ecosystemKpis.activeReservationsCount}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveModule("gym")}
-              className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
-                activeModule === "gym"
-                  ? "bg-sky-500/20 text-sky-300 ring-1 ring-sky-500/40"
-                  : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
-              }`}
-            >
-              <Dumbbell className="h-3.5 w-3.5 shrink-0" />
-              <span>Gym</span>
-              <span className="rounded bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-sky-300">
-                {ecosystemKpis.activeGymCount}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveModule("physio")}
-              className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
-                activeModule === "physio"
-                  ? "bg-rose-500/20 text-rose-300 ring-1 ring-rose-500/40"
-                  : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
-              }`}
-            >
-              <HeartPulse className="h-3.5 w-3.5 shrink-0" />
-              <span>Physiotherapy</span>
-              <span className="rounded bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-rose-300">
-                {ecosystemKpis.activeRehabCases}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveModule("pos")}
-              className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1.5 font-mono text-xs font-semibold transition-all ${
-                activeModule === "pos"
-                  ? "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40"
-                  : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
-              }`}
-            >
-              <ShoppingCart className="h-3.5 w-3.5 shrink-0" />
-              <span>Kiosk POS</span>
-              <span className="rounded bg-ink-950/80 px-1.5 py-0.5 text-[10px] text-amber-300">
-                {money(ecosystemKpis.todayPosSales)}
-              </span>
-            </button>
-
-            <Link
-              to="/"
-              className="ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-court-500 px-3 py-1.5 font-mono text-[11px] font-bold uppercase tracking-wider text-ink-950 shadow-sm ring-1 ring-court-400 transition-all hover:bg-court-400"
-            >
-              <ArrowLeft className="h-3.5 w-3.5 stroke-[2.5]" />
-              <span>Back to Vector</span>
-            </Link>
-          </div>
-        </div>
-      </header>
+        </header>
+      )}
 
       {/* =================================================================== */}
       {/* MAIN VESCIO NEXUS CONTENT CONTAINER                                 */}
       {/* =================================================================== */}
-      <main className="mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 py-6 lg:px-8 space-y-6">
-        {/* 1. LIVE CROSS-MODULE KPI STRIP (5 Executive Command Cards) */}
-        <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          {/* KPI 1: Today's Total Vescio Nexus Revenue */}
-          <div className="flex min-w-0 flex-col justify-between rounded-xl border border-emerald-500/40 bg-gradient-to-br from-emerald-950/35 via-ink-900 to-ink-900 p-4 shadow-sm">
-            <div className="flex items-center justify-between gap-2">
-              <span className="truncate font-mono text-[10px] font-bold uppercase tracking-wider text-emerald-300">
-                Today&apos;s Nexus Revenue
-              </span>
-              <Wallet className="h-4 w-4 shrink-0 text-emerald-400" />
-            </div>
-            <div className="mt-2 font-display text-2xl font-bold tracking-tight text-ink-100">
-              {money(ecosystemKpis.todayTotalNexusRevenue)}
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-ink-800/80 pt-2 font-mono text-[10px] text-ink-300">
-              <span>Courts {money(ecosystemKpis.todayCourtRevenue)}</span>
-              <span>·</span>
-              <span>Gym {money(ecosystemKpis.todayGymRevenue)}</span>
-              <span>·</span>
-              <span>Physio {money(ecosystemKpis.todayPhysioRevenue)}</span>
-              <span>·</span>
-              <span>POS {money(ecosystemKpis.todayPosSales)}</span>
-            </div>
-          </div>
-
-          {/* KPI 2: Active Court Bookings Today & HCA/HCB/Full Utilization % */}
-          <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-4">
-            <div className="flex items-center justify-between gap-2">
-              <span className="truncate font-mono text-[10px] font-bold uppercase tracking-wider text-court-300">
-                Courts Today · Utilization
-              </span>
-              <Calendar className="h-4 w-4 shrink-0 text-court-400" />
-            </div>
-            <div className="mt-2 flex items-baseline justify-between gap-2">
-              <span className="font-display text-2xl font-bold text-ink-100">
-                {ecosystemKpis.todayCourtBookingsCount} Bookings
-              </span>
-              <span className="rounded bg-court-500/20 px-1.5 py-0.5 font-mono text-xs font-bold text-court-300">
-                {ecosystemKpis.courtUtilizationPct}% Util.
-              </span>
-            </div>
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-1 border-t border-ink-800/80 pt-2 font-mono text-[10px] text-ink-400">
-              <span>
-                Full: <strong className="text-ink-200">{ecosystemKpis.todayFullCourtCount}</strong>{" "}
-                · HCA: <strong className="text-ink-200">{ecosystemKpis.todayHcaCount}</strong> ·
-                HCB: <strong className="text-ink-200">{ecosystemKpis.todayHcbCount}</strong>
-              </span>
-              <span>{ecosystemKpis.totalConfiguredCourts} court(s)</span>
-            </div>
-          </div>
-
-          {/* KPI 3: Gym Check-Ins Today & Active Memberships */}
-          <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-4">
-            <div className="flex items-center justify-between gap-2">
-              <span className="truncate font-mono text-[10px] font-bold uppercase tracking-wider text-sky-300">
-                Gym Check-Ins &amp; Members
-              </span>
-              <Dumbbell className="h-4 w-4 shrink-0 text-sky-400" />
-            </div>
-            <div className="mt-2 flex items-baseline justify-between gap-2">
-              <span className="font-display text-2xl font-bold text-ink-100">
-                {ecosystemKpis.todayGymCheckIns} Check-Ins
-              </span>
-              <span className="rounded bg-sky-500/20 px-1.5 py-0.5 font-mono text-xs font-bold text-sky-300">
-                {ecosystemKpis.activeGymCount} Active
-              </span>
-            </div>
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-1 border-t border-ink-800/80 pt-2 font-mono text-[10px] text-ink-400">
-              <span>{money(ecosystemKpis.gymMonthlyRevenue)}/mo recurring</span>
-              <span>{ecosystemKpis.activeCoachPoolsCount} Coach pool(s)</span>
-            </div>
-          </div>
-
-          {/* KPI 4: Physiotherapy Appointments Today & Room Utilization */}
-          <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-4">
-            <div className="flex items-center justify-between gap-2">
-              <span className="truncate font-mono text-[10px] font-bold uppercase tracking-wider text-rose-300">
-                Physio Today · Room Util.
-              </span>
-              <HeartPulse className="h-4 w-4 shrink-0 text-rose-400" />
-            </div>
-            <div className="mt-2 flex items-baseline justify-between gap-2">
-              <span className="font-display text-2xl font-bold text-ink-100">
-                {ecosystemKpis.todayPhysioApptsCount} Appts
-              </span>
-              <span className="rounded bg-rose-500/20 px-1.5 py-0.5 font-mono text-xs font-bold text-rose-300">
-                {ecosystemKpis.physioRoomUtilizationPct}% Rooms
-              </span>
-            </div>
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-1 border-t border-ink-800/80 pt-2 font-mono text-[10px] text-ink-400">
-              <span>{ecosystemKpis.activeRehabCases} active rehab cases</span>
-              <span>{ecosystemKpis.totalPhysioRooms} room(s)</span>
-            </div>
-          </div>
-
-          {/* KPI 5: Kiosk POS Sales Today & Low-Stock Inventory Alerts */}
-          <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-4">
-            <div className="flex items-center justify-between gap-2">
-              <span className="truncate font-mono text-[10px] font-bold uppercase tracking-wider text-amber-300">
-                Kiosk POS &amp; Stock Alerts
-              </span>
-              <ShoppingCart className="h-4 w-4 shrink-0 text-amber-400" />
-            </div>
-            <div className="mt-2 flex items-baseline justify-between gap-2">
-              <span className="font-display text-2xl font-bold text-ink-100">
-                {money(ecosystemKpis.todayPosSales)}
-              </span>
-              <span
-                className={`rounded px-1.5 py-0.5 font-mono text-xs font-bold ${
-                  ecosystemKpis.lowStockAlertsCount > 0
-                    ? "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40"
-                    : "bg-emerald-500/15 text-emerald-300"
-                }`}
-              >
-                {ecosystemKpis.lowStockAlertsCount} Low Stock
-              </span>
-            </div>
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-1 border-t border-ink-800/80 pt-2 font-mono text-[10px] text-ink-400">
-              <span>{ecosystemKpis.todayPosTxCount} order(s) today</span>
-              <span>Total: {money(ecosystemKpis.totalPosSales)}</span>
-            </div>
-          </div>
-        </div>
-
+      <main
+        className={`mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 lg:px-8 ${
+          isLaunchedModule ? "py-4 space-y-4" : "py-6 space-y-6"
+        }`}
+      >
         {/* ================================================================= */}
-        {/* VIEW 0: VESCIO NEXUS EXECUTIVE COMMAND CENTER HUB                 */}
+        {/* VIEW 0: VESCIO NEXUS EXECUTIVE COMMAND CENTER HUB (ONLY ON HUB)   */}
         {/* ================================================================= */}
         {activeModule === "hub" && (
           <div className="min-w-0 max-w-full space-y-6">
+            {/* 1. LIVE CROSS-MODULE KPI STRIP (5 Executive Command Cards - ONLY ON OVERVIEW) */}
+            <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              {/* KPI 1: Today's Total Vescio Nexus Revenue */}
+              <div className="flex min-w-0 flex-col justify-between rounded-xl border border-emerald-500/40 bg-gradient-to-br from-emerald-950/35 via-ink-900 to-ink-900 p-4 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate font-mono text-[10px] font-bold uppercase tracking-wider text-emerald-300">
+                    Today&apos;s Nexus Revenue
+                  </span>
+                  <Wallet className="h-4 w-4 shrink-0 text-emerald-400" />
+                </div>
+                <div className="mt-2 font-display text-2xl font-bold tracking-tight text-ink-100">
+                  {money(ecosystemKpis.todayTotalNexusRevenue)}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-ink-800/80 pt-2 font-mono text-[10px] text-ink-300">
+                  <span>Courts {money(ecosystemKpis.todayCourtRevenue)}</span>
+                  <span>·</span>
+                  <span>Gym {money(ecosystemKpis.todayGymRevenue)}</span>
+                  <span>·</span>
+                  <span>Physio {money(ecosystemKpis.todayPhysioRevenue)}</span>
+                  <span>·</span>
+                  <span>POS {money(ecosystemKpis.todayPosSales)}</span>
+                </div>
+              </div>
+
+              {/* KPI 2: Active Court Bookings Today & HCA/HCB/Full Utilization % */}
+              <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate font-mono text-[10px] font-bold uppercase tracking-wider text-court-300">
+                    Courts Today · Utilization
+                  </span>
+                  <Calendar className="h-4 w-4 shrink-0 text-court-400" />
+                </div>
+                <div className="mt-2 flex items-baseline justify-between gap-2">
+                  <span className="font-display text-2xl font-bold text-ink-100">
+                    {ecosystemKpis.todayCourtBookingsCount} Bookings
+                  </span>
+                  <span className="rounded bg-court-500/20 px-1.5 py-0.5 font-mono text-xs font-bold text-court-300">
+                    {ecosystemKpis.courtUtilizationPct}% Util.
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-1 border-t border-ink-800/80 pt-2 font-mono text-[10px] text-ink-400">
+                  <span>
+                    Full:{" "}
+                    <strong className="text-ink-200">{ecosystemKpis.todayFullCourtCount}</strong> ·
+                    HCA: <strong className="text-ink-200">{ecosystemKpis.todayHcaCount}</strong> ·
+                    HCB: <strong className="text-ink-200">{ecosystemKpis.todayHcbCount}</strong>
+                  </span>
+                  <span>{ecosystemKpis.totalConfiguredCourts} court(s)</span>
+                </div>
+              </div>
+
+              {/* KPI 3: Gym Check-Ins Today & Active Memberships */}
+              <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate font-mono text-[10px] font-bold uppercase tracking-wider text-sky-300">
+                    Gym Check-Ins &amp; Members
+                  </span>
+                  <Dumbbell className="h-4 w-4 shrink-0 text-sky-400" />
+                </div>
+                <div className="mt-2 flex items-baseline justify-between gap-2">
+                  <span className="font-display text-2xl font-bold text-ink-100">
+                    {ecosystemKpis.todayGymCheckIns} Check-Ins
+                  </span>
+                  <span className="rounded bg-sky-500/20 px-1.5 py-0.5 font-mono text-xs font-bold text-sky-300">
+                    {ecosystemKpis.activeGymCount} Active
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-1 border-t border-ink-800/80 pt-2 font-mono text-[10px] text-ink-400">
+                  <span>{money(ecosystemKpis.gymMonthlyRevenue)}/mo recurring</span>
+                  <span>{ecosystemKpis.activeCoachPoolsCount} Coach pool(s)</span>
+                </div>
+              </div>
+
+              {/* KPI 4: Physiotherapy Appointments Today & Room Utilization */}
+              <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate font-mono text-[10px] font-bold uppercase tracking-wider text-rose-300">
+                    Physio Today · Room Util.
+                  </span>
+                  <HeartPulse className="h-4 w-4 shrink-0 text-rose-400" />
+                </div>
+                <div className="mt-2 flex items-baseline justify-between gap-2">
+                  <span className="font-display text-2xl font-bold text-ink-100">
+                    {ecosystemKpis.todayPhysioApptsCount} Appts
+                  </span>
+                  <span className="rounded bg-rose-500/20 px-1.5 py-0.5 font-mono text-xs font-bold text-rose-300">
+                    {ecosystemKpis.physioRoomUtilizationPct}% Rooms
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-1 border-t border-ink-800/80 pt-2 font-mono text-[10px] text-ink-400">
+                  <span>{ecosystemKpis.activeRehabCases} active rehab cases</span>
+                  <span>{ecosystemKpis.totalPhysioRooms} room(s)</span>
+                </div>
+              </div>
+
+              {/* KPI 5: Kiosk POS Sales Today & Low-Stock Inventory Alerts */}
+              <div className="flex min-w-0 flex-col justify-between rounded-xl border border-ink-800 bg-ink-900/90 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate font-mono text-[10px] font-bold uppercase tracking-wider text-amber-300">
+                    Kiosk POS &amp; Stock Alerts
+                  </span>
+                  <ShoppingCart className="h-4 w-4 shrink-0 text-amber-400" />
+                </div>
+                <div className="mt-2 flex items-baseline justify-between gap-2">
+                  <span className="font-display text-2xl font-bold text-ink-100">
+                    {money(ecosystemKpis.todayPosSales)}
+                  </span>
+                  <span
+                    className={`rounded px-1.5 py-0.5 font-mono text-xs font-bold ${
+                      ecosystemKpis.lowStockAlertsCount > 0
+                        ? "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40"
+                        : "bg-emerald-500/15 text-emerald-300"
+                    }`}
+                  >
+                    {ecosystemKpis.lowStockAlertsCount} Low Stock
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-1 border-t border-ink-800/80 pt-2 font-mono text-[10px] text-ink-400">
+                  <span>{ecosystemKpis.todayPosTxCount} order(s) today</span>
+                  <span>Total: {money(ecosystemKpis.totalPosSales)}</span>
+                </div>
+              </div>
+            </div>
             {/* Executive Command Banner + Active Branch Scope */}
             <div className="rounded-xl border border-emerald-500/30 bg-gradient-to-r from-ink-900 via-ink-900 to-emerald-950/40 p-5">
               <div className="flex flex-wrap items-center justify-between gap-4">

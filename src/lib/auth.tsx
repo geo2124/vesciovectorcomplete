@@ -33,6 +33,9 @@ import { getTenantSlug } from "./utils";
 type AuthContextType = {
   user: User | null;
   passwordUser: UserAccount | null;
+  role?: string;
+  userRole?: string;
+  userBranch?: string;
   loading: boolean;
   signInWithGoogle: () => Promise<{
     success: boolean;
@@ -1164,6 +1167,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         user,
         passwordUser,
+        role: passwordUser?.role,
+        userRole: passwordUser?.role,
+        userBranch: passwordUser?.branch,
         loading,
         signInWithGoogle,
         signInWithGoogleToken,

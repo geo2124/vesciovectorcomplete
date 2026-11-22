@@ -388,7 +388,7 @@ export function calculateAttendanceVerifiedPayroll(
         id: s.id,
         sessionId: s.id,
         title: s.title,
-        kind: s.kind,
+        kind: s.kind || "Practice",
         date: s.date,
         time: s.time,
         branch: s.branch,
@@ -566,6 +566,7 @@ export function createCoachPayrollDebitEntry(params: {
   year: number;
   monthCode: string;
   customAmount?: number;
+  isAdvance?: boolean;
   advanceReason?: string;
   linkedAdvanceSessionsCount?: number;
   linkedAdvanceSessionIds?: string[];

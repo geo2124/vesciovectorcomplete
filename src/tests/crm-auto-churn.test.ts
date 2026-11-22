@@ -9,7 +9,7 @@ import {
 const makeIdlePlayer = (overrides: Partial<Player> = {}): Player => ({
   id: "p-idle-1",
   name: "Tariq Khoury",
-  gender: "Male",
+  gender: "Boy",
   dob: "2012-03-15",
   category: "U-14",
   teams: ["U-14 Boys Elite"],
@@ -17,6 +17,7 @@ const makeIdlePlayer = (overrides: Partial<Player> = {}): Player => ({
   phone: "03-555666",
   parent: "Sami Khoury",
   parentPhone: "03-555666",
+  school: "College Notre Dame",
   fee: 100,
   status: "Idle",
   idleSinceDate: "2026-05-01",
@@ -64,11 +65,22 @@ describe("CRM Auto-Churn Date & Activity Evaluator", () => {
       id: "p-idle-1",
       idleSinceDate: "2026-05-01",
       // Old payment from previous cycle before idleSinceDate
-      payments: [{ id: "pmt-old", date: "2026-04-05", amount: 100, method: "Cash" }],
+      payments: [
+        {
+          id: "pmt-old",
+          date: "2026-04-05",
+          amount: 100,
+          notes: "April tuition",
+          paymentMethod: "Cash",
+        },
+      ],
     });
 
     const oldSessionBeforeIdle: SessionItem = {
       id: "sess-old",
+      title: "U-14 Practice",
+      detail: "Court 1",
+      coach: "Coach Karim",
       team: "U-14 Boys Elite",
       branch: "Downtown Arena",
       court: "Court 1",
@@ -84,6 +96,7 @@ describe("CRM Auto-Churn Date & Activity Evaluator", () => {
       invoiceNumber: "INV-2026-04-001",
       playerId: "p-idle-1",
       playerName: "Tariq Khoury",
+      branch: "Downtown Arena",
       team: "U-14 Boys Elite",
       billingMonth: "April",
       month: "04",
@@ -93,6 +106,7 @@ describe("CRM Auto-Churn Date & Activity Evaluator", () => {
       paidDate: "2026-04-05",
       issuedDate: "2026-04-01",
       dueDate: "2026-04-15",
+      createdAt: "2026-04-01",
     };
 
     // With only pre-idle activity, after 35 days (2026-06-05) the player MUST be auto-churned

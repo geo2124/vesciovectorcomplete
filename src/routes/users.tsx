@@ -1085,7 +1085,7 @@ function UsersPage() {
               <Button variant="outline" size="sm" onClick={() => setRoleToDeleteConfirm(null)}>
                 Cancel
               </Button>
-              <Button variant="bad" size="sm" onClick={confirmDeleteRole}>
+              <Button variant="danger" size="sm" onClick={confirmDeleteRole}>
                 Confirm & Delete Role
               </Button>
             </div>
@@ -1114,7 +1114,7 @@ function UsersPage() {
               <Button variant="outline" size="sm" onClick={() => setUserToDeleteConfirm(null)}>
                 Cancel
               </Button>
-              <Button variant="bad" size="sm" onClick={confirmDeleteUser}>
+              <Button variant="danger" size="sm" onClick={confirmDeleteUser}>
                 Revoke & Remove Account
               </Button>
             </div>

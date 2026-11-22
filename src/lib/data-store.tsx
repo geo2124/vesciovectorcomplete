@@ -163,6 +163,7 @@ export type {
   Branch,
   BranchNexusRates,
   BranchOffDay,
+  Coach,
   Court,
   CourtAllocationType,
   CourtRateType,
@@ -176,6 +177,8 @@ export type {
   GymCoachProfile,
   GymScheduleSlotType,
   GymScheduleSlot,
+  Invoice,
+  Order,
   PhysioRecord,
   PhysioTreatmentSession,
   PhysioExercisePrescription,
@@ -184,6 +187,7 @@ export type {
   PhysioRoom,
   PhysioPackageConfig,
   PhysioAppointment,
+  Player,
   PlayerMedicalClearanceStatus,
   PosCartLineItem,
   PosCatalogItem,
@@ -198,8 +202,16 @@ export type {
   MerchPrintingItem,
   PrintingOption,
   InsuranceCompany,
+  ResourceFolder,
+  ResourceItem,
+  SessionItem,
+  Staff,
+  StockItem,
+  Supplier,
+  Team,
   TrainingPackage,
   SpecialOfferConfig,
+  Workshop,
   CrmStage,
   CrmSettings,
   CrmCommunicationEntry,
@@ -212,8 +224,9 @@ export type LedgerEntry = {
   date: string;
   account: string;
   category?: string;
-  entry: string;
+  entry?: string;
   description?: string;
+  memo?: string;
   type: "Revenue" | "Expense" | "credit" | "debit";
   amount: number;
   status: "Collected" | "Paid" | "Pending";
@@ -222,6 +235,7 @@ export type LedgerEntry = {
   branch?: string;
   attachment?: string;
   referenceId?: string;
+  period?: string;
   playerId?: string;
   insuranceCompanyId?: string;
   insuranceCompanyName?: string;
@@ -278,8 +292,10 @@ export type PermissionPower = {
 export type RoleDefinition = {
   id: string;
   name: string;
+  role?: string;
   description: string;
   scope: string;
+  branchScope?: "All branches" | "Assigned branch only" | string;
   defaultBranchScope?: "All branches" | "Assigned branch only";
   isSystem?: boolean;
   permissions: Record<string, PermissionPower>;
@@ -545,6 +561,7 @@ export type Plan = {
   id: string;
   title: string;
   category: string;
+  team?: string;
   coach: string;
   coachId?: string;
   focus: string;
@@ -556,6 +573,8 @@ export type Plan = {
 
 export type Academy = {
   name: string;
+  tagline?: string;
+  hq?: string;
   url: string;
   plan: string;
   renews: string;
@@ -622,7 +641,7 @@ export type Academy = {
 export function getPlayerMonthlyPresentCount(
   playerId: string,
   sessions: SessionItem[] | undefined,
-  attendance: Record<string, Record<string, "Present" | "Absent" | "Excused">> | undefined,
+  attendance: Record<string, Record<string, "Present" | "Absent" | "Excused" | string>> | undefined,
   yearMonth?: string,
 ): number {
   if (!playerId) return 0;
@@ -666,7 +685,7 @@ export type WhatsAppGroupMemberPhone = {
 export type WhatsAppGroup = {
   id: string;
   name: string;
-  scope: string;
+  scope?: string;
   scopeType?: WhatsAppGroupScopeType;
   link?: string;
   branchId?: string;
@@ -953,7 +972,8 @@ export function resolveWhatsAppGroupMembers(
   return [...autoMembers, ...manualMembers];
 }
 
-export type NotificationType = "attendance" | "billing" | "inventory" | "curriculum" | "system";
+export type NotificationType =
+  "attendance" | "billing" | "billing_automation" | "inventory" | "curriculum" | "system";
 
 export type AcademyRole =
   "super_admin" | "branch_manager" | "coach" | "technical_director" | "accountant";
@@ -964,9 +984,10 @@ export interface AcademyNotification {
   title: string;
   message: string;
   type: NotificationType;
-  targetRoles: AcademyRole[];
+  targetRoles?: AcademyRole[];
   targetBranchId?: string; // Optional: filter by single branch if relevant
   targetBranchIds?: string[]; // Optional: filter by multiple branches
+  branch?: string;
   targetUserId?: string; // Optional: target a specific user ID
   targetCoachId?: string; // Optional: target a specific coach ID
   targetCoachName?: string; // Optional: target a specific coach by name
@@ -977,6 +998,7 @@ export interface AcademyNotification {
   readBy: string[]; // List of user keys who marked this notification as read
   dismissedBy?: string[]; // List of user keys who dismissed this notification
   actionUrl?: string; // Deep link to the relevant screen (e.g. /accounting, /merchandise, /coach)
+  link?: string;
   priority?: "high" | "normal";
   targetPlayerId?: string;
   targetPlayerName?: string;
@@ -1035,7 +1057,7 @@ export type DB = {
   physioRecords: PhysioRecord[];
   posCatalog: PosCatalogItem[];
   posTransactions: PosTransaction[];
-  customRoles?: RoleDefinition[];
+  customRoles: RoleDefinition[];
   ageCategoryRules?: Record<string, { startDate: string; endDate: string }>;
 };
 
@@ -1233,9 +1255,16 @@ export function evaluateTeamEligibilityForDob(
   const birthYearRange = startYr === endYr ? startYr : `${startYr}–${endYr}`;
 
   if (playerGender && team.gender) {
-    const tGender = team.gender.trim().toLowerCase();
-    const pGender = playerGender.trim().toLowerCase();
-    const isMixed = tGender === "mixed" || tGender === "co-ed" || tGender === "coed";
+    const normalizeGender = (g: string) => {
+      const s = g.trim().toLowerCase();
+      if (s === "boys" || s === "boy" || s === "male" || s === "m") return "male";
+      if (s === "girls" || s === "girl" || s === "female" || s === "f") return "female";
+      if (s === "mixed" || s === "co-ed" || s === "coed") return "mixed";
+      return s;
+    };
+    const tGender = normalizeGender(team.gender);
+    const pGender = normalizeGender(playerGender);
+    const isMixed = tGender === "mixed";
     if (!isMixed && tGender !== pGender) {
       return {
         eligible: false,
@@ -3697,7 +3726,7 @@ const DataCtx: Context<Ctx | null> =
 const DataActionsCtx: Context<DataActionsCtxValue | null> =
   g.__vvDataActionsCtx ?? (g.__vvDataActionsCtx = createContext<DataActionsCtxValue | null>(null));
 
-export const CORE_PRELOAD_COLLECTIONS: CollectionKey[] = [
+export const CORE_PRELOAD_COLLECTIONS: Array<CollectionKey | "attendance"> = [
   "players",
   "teams",
   "sessions",
@@ -4691,7 +4720,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         params,
       );
 
-      dbStore.setDB(nextDb);
+      dbStore.setWholeDB(nextDb);
       setDb(nextDb);
 
       try {
@@ -4702,7 +4731,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           branchRecord: updatedBranchRecord,
         };
       } catch (err: unknown) {
-        dbStore.setDB(currentDbSnapshot);
+        dbStore.setWholeDB(currentDbSnapshot);
         setDb(currentDbSnapshot);
         const errMsg = err instanceof Error ? err.message : "Batch cascade error";
         toast.error(`Failed to save branch and cascade updates: ${errMsg}. Reverting changes.`);
@@ -5157,9 +5186,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
       try {
         await atomicProcessMerchandiseTransaction(tenantId, {
           stockUpdates: stockItemToUpdate ? [stockItemToUpdate] : undefined,
-          order: order as Record<string, unknown>,
+          order: order as unknown as { id: string; [key: string]: unknown },
           playerUpdate: playerToUpdate || undefined,
-          ledgerEntries: newLedgerEntries as unknown as Record<string, unknown>[],
+          ledgerEntries: newLedgerEntries as unknown as { id: string; [key: string]: unknown }[],
         });
 
         // Event Dispatch: Inventory alert to super_admin, accountant, and branch_manager when stock <= reorderLevel
@@ -5282,9 +5311,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // Atomic commit to Firestore
       try {
         await atomicProcessMerchandiseTransaction(tenantId, {
-          order: updatedOrder as Record<string, unknown>,
+          order: updatedOrder as unknown as { id: string; [key: string]: unknown },
           playerUpdate: playerToUpdate || undefined,
-          ledgerEntries: [newLedgerEntry] as unknown as Record<string, unknown>[],
+          ledgerEntries: [newLedgerEntry] as unknown as { id: string; [key: string]: unknown }[],
         });
         for (const arId of arIdsToDelete) {
           await deleteDoc(doc(firestore, "tenants", tenantId, "ledger", arId));
@@ -7971,7 +8000,7 @@ export function useTenantUser(): (UserAccount & { id: string }) | null {
           isSuperAdminEmail || isSuperAdminRoleOrEmail(match.role, realEmail)
             ? "Super Admin"
             : normalizeUiRole(match.role),
-        active: match.active !== false,
+        active: Boolean(match.active),
       };
     }
 
@@ -7984,9 +8013,9 @@ export function useTenantUser(): (UserAccount & { id: string }) | null {
         username: coachMatch.username || (realEmail ? realEmail.split("@")[0] : user.uid),
         role: "Coach",
         branch: coachMatch.branch || "HQ",
-        branchScope: "Assigned branch only",
+        branchScope: "Assigned branch only" as const,
         active: true,
-        method: "Google",
+        method: "Google" as const,
       };
     }
 
@@ -8003,9 +8032,9 @@ export function useTenantUser(): (UserAccount & { id: string }) | null {
       username: realEmail ? realEmail.split("@")[0] : user.uid,
       role: "Super Admin",
       branch: "All",
-      branchScope: "All branches",
+      branchScope: "All branches" as const,
       active: true,
-      method: "Google",
+      method: "Google" as const,
     };
   }, [passwordUser, user, users, coaches, ready]);
 
@@ -8027,9 +8056,7 @@ export function useTenantUser(): (UserAccount & { id: string }) | null {
   return resolvedTenantUser;
 }
 
-type ListKeys = {
-  [K in keyof DB]: DB[K] extends { id: string }[] ? K : never;
-}[keyof DB];
+type ListKeys = CollectionKey;
 
 const EMPTY_COLLECTION_SLICE: never[] = [];
 
@@ -8198,6 +8225,9 @@ export function useModulePermissions(moduleKey: string): {
   canRead: boolean;
   canWrite: boolean;
   canDelete: boolean;
+  read: boolean;
+  write: boolean;
+  delete: boolean;
 } {
   const customRoles = useSyncExternalStore(
     subscribeCustomRolesSlice,
@@ -8222,7 +8252,14 @@ export function useModulePermissions(moduleKey: string): {
       roleLower === "super admin" ||
       roleLower === "academy manager"
     ) {
-      return { canRead: true, canWrite: true, canDelete: true };
+      return {
+        canRead: true,
+        canWrite: true,
+        canDelete: true,
+        read: true,
+        write: true,
+        delete: true,
+      };
     }
 
     const defaultDef = defaultRoleDefinitions.find((r) => r.name.toLowerCase() === roleLower);
@@ -8232,11 +8269,17 @@ export function useModulePermissions(moduleKey: string): {
       ...customDef?.permissions,
     };
     const modPerm = mergedPermissions[moduleKey];
+    const canRead = Boolean(modPerm?.read);
+    const canWrite = Boolean(modPerm?.write);
+    const canDelete = Boolean(modPerm?.delete);
 
     return {
-      canRead: Boolean(modPerm?.read),
-      canWrite: Boolean(modPerm?.write),
-      canDelete: Boolean(modPerm?.delete),
+      canRead,
+      canWrite,
+      canDelete,
+      read: canRead,
+      write: canWrite,
+      delete: canDelete,
     };
   }, [currentUser, user?.email, passwordUser?.email, customRoles, moduleKey]);
 }
@@ -8245,4 +8288,3 @@ export const uid = (prefix: string) =>
   `${prefix}-${Date.now().toString(36)}${Math.floor(Math.random() * 1000).toString(36)}`;
 
 export const todayISO = () => new Date().toISOString().slice(0, 10);
-export type { SessionItem } from "@/lib/mock-data";
