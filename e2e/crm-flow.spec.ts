@@ -70,18 +70,18 @@ test.describe("Vescio Vector CRM — Full Pipeline E2E Suite", () => {
     const saveCardBtn = page.getByRole("button", { name: /Save CRM Card/i }).first();
     await saveCardBtn.click();
 
-    await expect(page.getByText(/New CRM Lead \/ Client Card/i).first()).toBeHidden({
+    await expect(newLeadModalHeading).toBeHidden({
       timeout: 10000,
     });
 
-    // Verify the newly created lead appears in the pipeline
-    const leadCardHeading = page.locator("h4, td").filter({ hasText: leadName }).first();
-    await expect(leadCardHeading).toBeVisible({ timeout: 10000 });
+    // Verify the newly created lead appears in the pipeline (rendered in a <div> inside Kanban card)
+    const leadCardText = page.getByText(leadName).first();
+    await expect(leadCardText).toBeVisible({ timeout: 10000 });
 
     // -------------------------------------------------------------------------
     // 3. Lead Detail, Communication Log & Stage Update
     // -------------------------------------------------------------------------
-    await leadCardHeading.click();
+    await leadCardText.click();
 
     const detailModalHeading = page
       .locator("h2")
@@ -131,7 +131,7 @@ test.describe("Vescio Vector CRM — Full Pipeline E2E Suite", () => {
     );
     await expect(searchInput).toBeVisible({ timeout: 10000 });
     await searchInput.fill(leadName);
-    await expect(page.locator("h4, td").filter({ hasText: leadName }).first()).toBeVisible({
+    await expect(page.getByText(leadName).first()).toBeVisible({
       timeout: 10000,
     });
 
@@ -140,7 +140,7 @@ test.describe("Vescio Vector CRM — Full Pipeline E2E Suite", () => {
       .getByRole("button", { name: /List View/i })
       .first()
       .click();
-    await expect(page.locator("h4, td").filter({ hasText: leadName }).first()).toBeVisible({
+    await expect(page.getByText(leadName).first()).toBeVisible({
       timeout: 10000,
     });
 
@@ -148,11 +148,10 @@ test.describe("Vescio Vector CRM — Full Pipeline E2E Suite", () => {
       .getByRole("button", { name: /Kanban Board/i })
       .first()
       .click();
-    const kanbanLeadHeading = page.locator("h4").filter({ hasText: leadName }).first();
-    await expect(kanbanLeadHeading).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(leadName).first()).toBeVisible({ timeout: 10000 });
 
     // Re-open the test lead and delete it so staging data stays clean
-    await kanbanLeadHeading.click();
+    await page.getByText(leadName).first().click();
     await expect(detailModalHeading).toBeVisible({ timeout: 10000 });
 
     const deleteBtn = page.locator('button[title="Delete CRM Card"]').first();
@@ -161,7 +160,7 @@ test.describe("Vescio Vector CRM — Full Pipeline E2E Suite", () => {
 
     await expect(detailModalHeading).toBeHidden({ timeout: 10000 });
     await searchInput.fill("");
-    await expect(page.locator("h4, td").filter({ hasText: leadName })).toHaveCount(0, {
+    await expect(page.getByText(leadName)).toHaveCount(0, {
       timeout: 10000,
     });
 
