@@ -30,7 +30,12 @@ test.describe("Vescio Vector CRM — Full Pipeline E2E Suite", () => {
       timeout: 15000,
     });
     await kanbanBoardBtn.click();
-    await expect(page.getByText(/New Inquiries \/ Leads/i).first()).toBeVisible({
+    await expect(
+      page
+        .locator("h2, h3, h4")
+        .filter({ hasText: /New Inquiries \/ Leads/i })
+        .first(),
+    ).toBeVisible({
       timeout: 15000,
     });
 
