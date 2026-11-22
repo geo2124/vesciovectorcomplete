@@ -1,21 +1,9 @@
 import { test, expect } from "@playwright/test";
+import { ensureAuthenticated } from "../e2e/helpers/auth";
 
 test.describe("Academy CRM Pipeline", () => {
   test.beforeEach(async ({ page }) => {
-    // Authenticate as Super Admin for automated headless runs
-    await page.addInitScript(() => {
-      window.localStorage.setItem(
-        "vv_auth_session_user",
-        JSON.stringify({
-          id: "admin-1",
-          email: "geogo3@gmail.com",
-          name: "Georges Khoury",
-          role: "super_admin",
-          branch: "All",
-          tenantId: "donbosco",
-        }),
-      );
-    });
+    await ensureAuthenticated(page);
   });
 
   test("Add Player and Check Age Matrix Assignment", async ({ page }) => {

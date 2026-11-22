@@ -1857,7 +1857,7 @@ function CoachesPage() {
         submitLabel={editing ? "Save changes" : "Create coach"}
         wide
       >
-        <div className="grid gap-3 p-4 sm:grid-cols-2">
+        <div className="grid items-end gap-3 p-4 sm:grid-cols-2">
           <Field label="Full name">
             <Input value={form.name} onChange={(v) => setForm({ ...form, name: v })} />
           </Field>
@@ -2054,7 +2054,7 @@ function CoachesPage() {
                   onChange={(v) => setForm({ ...form, rate: Number(v) || 0 })}
                 />
               </Field>
-              <Field label="Rate Structure">
+              <Field label="Rate Structure" hint="Per session or hourly">
                 <Select
                   value={form.rateType || "per_session"}
                   onChange={(v) => setForm({ ...form, rateType: v as "per_session" | "hourly" })}
@@ -2100,7 +2100,7 @@ function CoachesPage() {
               label="Coach portal access"
             />
             {form.portal && (
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="mt-4 grid items-end gap-3 sm:grid-cols-2">
                 <Field label="Portal Username" hint="Leave blank to use email for Google login">
                   <Input
                     value={form.username || ""}

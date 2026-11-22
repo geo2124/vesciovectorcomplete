@@ -1824,7 +1824,7 @@ export const NexusPosModule: React.FC<NexusPosModuleProps> = ({
             )}
 
             {/* Customer Selection */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-2.5">
               <Field label={t.customerType}>
                 <Select
                   value={customerType}
@@ -2009,7 +2009,7 @@ export const NexusPosModule: React.FC<NexusPosModuleProps> = ({
               </Field>
 
               {paymentMethod === "Cash" && (
-                <div className="grid grid-cols-2 gap-2.5 p-3 rounded-xl bg-black/30 border border-ink-800">
+                <div className="grid grid-cols-2 items-end gap-2.5 p-3 rounded-xl bg-black/30 border border-ink-800">
                   <Field label={t.amountTendered}>
                     <Input
                       type="number"
@@ -2018,17 +2018,16 @@ export const NexusPosModule: React.FC<NexusPosModuleProps> = ({
                       placeholder={String(cartTotals.total)}
                     />
                   </Field>
-                  <div>
-                    <div className="text-[11px] text-ink-400 mb-1">{t.changeDue}</div>
-                    <div className="h-9 px-3 rounded-md bg-emerald-500/15 border border-emerald-500/30 flex items-center font-mono text-sm font-black text-emerald-400">
+                  <Field label={t.changeDue}>
+                    <div className="h-10 px-3 rounded-md bg-emerald-500/15 border border-emerald-500/30 flex items-center font-mono text-sm font-black text-emerald-400">
                       {money(cartTotals.changeDue)}
                     </div>
-                  </div>
+                  </Field>
                 </div>
               )}
 
               {paymentMethod === "Split Payment" && (
-                <div className="grid grid-cols-3 gap-2 p-3 rounded-xl bg-sky-500/10 border border-sky-500/30">
+                <div className="grid grid-cols-3 items-end gap-2 p-3 rounded-xl bg-sky-500/10 border border-sky-500/30">
                   <Field label={t.splitCash}>
                     <Input
                       type="number"
@@ -2521,7 +2520,7 @@ export const NexusPosModule: React.FC<NexusPosModuleProps> = ({
         title={editingProductId ? "Edit POS Product" : t.addProduct}
       >
         <div dir={isRtl ? "rtl" : "ltr"} className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-3">
             <Field label="Product Name (English)">
               <Input
                 value={productForm.name}
@@ -2631,7 +2630,7 @@ export const NexusPosModule: React.FC<NexusPosModuleProps> = ({
               ))}
             </Select>
           </Field>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 items-end gap-3">
             <Field label="Adjustment Type">
               <Select
                 value={invForm.adjustmentType}

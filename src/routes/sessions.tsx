@@ -1103,7 +1103,7 @@ function SessionsPage() {
         submitLabel={editing ? "Save changes" : "Create session"}
         wide
       >
-        <div className="grid gap-3 p-4 sm:grid-cols-2">
+        <div className="grid items-end gap-3 p-4 sm:grid-cols-2">
           <Field label="Type">
             <Select
               value={
@@ -1189,7 +1189,7 @@ function SessionsPage() {
 
               <Field label="Branch">
                 {isBranchManager ? (
-                  <div className="mt-1.5 rounded-md bg-ink-850 px-3 py-2 font-mono text-xs text-court-300 ring-1 ring-ink-700 flex items-center justify-between">
+                  <div className="h-10 rounded-md bg-ink-850 px-3 py-2 font-mono text-xs text-court-300 ring-1 ring-ink-700 flex items-center justify-between">
                     <span>{userBranch}</span>
                     <span className="text-[10px] text-ink-500 uppercase">Assigned Facility</span>
                   </div>
@@ -1342,7 +1342,7 @@ function SessionsPage() {
                           Default Coach Rate: {money(defaultRate)} — Editable for this session
                         </span>
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-3">
                         <Field
                           label={`Coach Session Fee (${db.academy?.currency || "USD"})`}
                           hint={
@@ -1407,7 +1407,7 @@ function SessionsPage() {
                         </Field>
                       </div>
                       {Boolean(form.assistantCoach?.trim()) && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-ink-800/80">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-3 pt-2 border-t border-ink-800/80">
                           <Field
                             label={`Assistant Coach Session Fee (${db.academy?.currency || "USD"})`}
                             hint={`Assigned: ${form.assistantCoach}`}
@@ -1477,7 +1477,7 @@ function SessionsPage() {
 
               <Field label="Branch">
                 {isBranchManager ? (
-                  <div className="mt-1.5 rounded-md bg-ink-850 px-3 py-2 font-mono text-xs text-court-300 ring-1 ring-ink-700 flex items-center justify-between">
+                  <div className="h-10 rounded-md bg-ink-850 px-3 py-2 font-mono text-xs text-court-300 ring-1 ring-ink-700 flex items-center justify-between">
                     <span>{userBranch}</span>
                     <span className="text-[10px] text-ink-500 uppercase">Assigned Facility</span>
                   </div>
@@ -1544,7 +1544,7 @@ function SessionsPage() {
                           Default Coach Rate: {money(defaultRate)} — Editable for this game
                         </span>
                       </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-3">
                         <Field
                           label={`Coach Game Fee (${db.academy?.currency || "USD"})`}
                           hint="Editable for this specific game session"
@@ -1698,7 +1698,7 @@ function SessionsPage() {
               </Field>
               <Field label="Branch">
                 {isBranchManager ? (
-                  <div className="mt-1.5 rounded-md bg-ink-850 px-3 py-2 font-mono text-xs text-court-300 ring-1 ring-ink-700 flex items-center justify-between">
+                  <div className="h-10 rounded-md bg-ink-850 px-3 py-2 font-mono text-xs text-court-300 ring-1 ring-ink-700 flex items-center justify-between">
                     <span>{userBranch}</span>
                     <span className="text-[10px] text-ink-500 uppercase">Assigned Facility</span>
                   </div>

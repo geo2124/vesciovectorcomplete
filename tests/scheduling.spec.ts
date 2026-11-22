@@ -1,21 +1,9 @@
 import { test, expect } from "@playwright/test";
+import { ensureAuthenticated } from "../e2e/helpers/auth";
 
 test.describe("Academy Reservations & Scheduling", () => {
   test.beforeEach(async ({ page }) => {
-    // Authenticate as Super Admin for automated headless runs
-    await page.addInitScript(() => {
-      window.localStorage.setItem(
-        "vv_auth_session_user",
-        JSON.stringify({
-          id: "admin-1",
-          email: "geogo3@gmail.com",
-          name: "Georges Khoury",
-          role: "super_admin",
-          branch: "All",
-          tenantId: "donbosco",
-        }),
-      );
-    });
+    await ensureAuthenticated(page);
   });
 
   test("Book Half-Court HCA/HCB Session", async ({ page }) => {
@@ -43,7 +31,7 @@ test.describe("Academy Reservations & Scheduling", () => {
     const modal = page.locator("div[role='dialog'], .fixed").first();
     await expect(modal).toBeVisible({ timeout: 10000 });
 
-    const titleInput = page
+    const titleInput = modal
       .locator("input")
       .filter({ hasNot: page.locator("[type='date'], [type='time'], [type='number']") })
       .first();

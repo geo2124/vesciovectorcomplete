@@ -233,10 +233,77 @@ export async function bootstrapFirestoreUserDocument(
   }
 }
 
+export function isE2EBypassEnabled(): boolean {
+  if (import.meta.env.VITE_E2E_BYPASS_AUTH === "true") {
+    return true;
+  }
+  if (!import.meta.env.PROD && typeof window !== "undefined") {
+    try {
+      return window.localStorage.getItem("vv_e2e_bypass_auth") === "true";
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+const DEFAULT_E2E_BYPASS_USER: UserAccount = {
+  id: "admin-1",
+  authUid: "admin-1",
+  email: "geogo3@gmail.com",
+  username: "geogo3",
+  name: "Georges Khoury",
+  role: "Super Admin",
+  branch: "All",
+  branchScope: "All branches",
+  active: true,
+  method: "Password",
+};
+
+function resolveStoredOrDefaultE2EUser(): UserAccount {
+  if (typeof window !== "undefined") {
+    try {
+      const raw =
+        window.localStorage.getItem("vv_auth_session_user") ||
+        window.sessionStorage.getItem("vv_auth_session_user");
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<UserAccount>;
+        if (parsed && (parsed.email || parsed.id)) {
+          const email = (parsed.email || DEFAULT_E2E_BYPASS_USER.email).trim();
+          const role = isSuperAdminRoleOrEmail(parsed.role, email)
+            ? "Super Admin"
+            : normalizeUiRole(parsed.role || "Super Admin");
+          const normalized: UserAccount = {
+            ...DEFAULT_E2E_BYPASS_USER,
+            ...parsed,
+            email,
+            role,
+            active: parsed.active !== false,
+            method: parsed.method || "Password",
+          };
+          window.localStorage.setItem("vv_auth_session_user", JSON.stringify(normalized));
+          window.sessionStorage.setItem("vv_auth_session_user", JSON.stringify(normalized));
+          return normalized;
+        }
+      }
+      window.localStorage.setItem("vv_auth_session_user", JSON.stringify(DEFAULT_E2E_BYPASS_USER));
+      window.sessionStorage.setItem(
+        "vv_auth_session_user",
+        JSON.stringify(DEFAULT_E2E_BYPASS_USER),
+      );
+    } catch {
+      // ignore storage errors
+    }
+  }
+  return DEFAULT_E2E_BYPASS_USER;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [passwordUser, setPasswordUser] = useState<UserAccount | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [passwordUser, setPasswordUser] = useState<UserAccount | null>(() =>
+    isE2EBypassEnabled() ? resolveStoredOrDefaultE2EUser() : null,
+  );
+  const [loading, setLoading] = useState<boolean>(() => !isE2EBypassEnabled());
 
   // Security Hardening: Restore persisted session on client mount after hydration,
   // clean up legacy keys, and handle explicit lock requests (?lock=1 or ?signout=1)
@@ -284,6 +351,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } catch {
             // ignore
           }
+        } else if (isE2EBypassEnabled()) {
+          const e2eUser = resolveStoredOrDefaultE2EUser();
+          setPasswordUser(e2eUser);
+          setLoading(false);
         }
       } catch {
         // ignore
@@ -303,6 +374,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const tenantId = getTenantSlug();
 
       if (!currentUser) {
+        if (isE2EBypassEnabled()) {
+          const e2eUser = resolveStoredOrDefaultE2EUser();
+          setPasswordUser(e2eUser);
+          setLoading(false);
+          return;
+        }
         if (typeof window !== "undefined") {
           window.localStorage.removeItem("vv_auth_session_user");
           window.sessionStorage.removeItem("vv_auth_session_user");

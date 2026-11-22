@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
+import { ensureAuthenticated } from "./helpers/auth";
 
 test.describe("Vescio Nexus ERP — Full Multi-Module E2E Suite", () => {
+  test.beforeEach(async ({ page }) => {
+    await ensureAuthenticated(page);
+  });
+
   test("Full Nexus ERP Flow: Overview, Full-Screen Mode, Courts, Gym, Physio, and POS", async ({
     page,
   }) => {
@@ -9,27 +14,17 @@ test.describe("Vescio Nexus ERP — Full Multi-Module E2E Suite", () => {
       pageErrors.push(err.message);
     });
 
-    await page.addInitScript(() => {
-      window.localStorage.setItem(
-        "vv_auth_session_user",
-        JSON.stringify({
-          id: "admin-1",
-          email: "geogo3@gmail.com",
-          name: "Georges Khoury",
-          role: "super_admin",
-          branch: "All",
-          tenantId: "donbosco",
-        }),
-      );
-    });
-
     // -------------------------------------------------------------------------
     // 1. Nexus Overview & Standalone Full-Screen Mode (/up-erp)
     // -------------------------------------------------------------------------
     await page.goto("/up-erp", { waitUntil: "domcontentloaded" });
 
     // Verify Overview Hub and KPI cards render
-    await expect(page.getByText(/Vescio Nexus ERP/i).first()).toBeVisible({
+    await expect(
+      page
+        .getByText(/MULTI-BRANCH HUB|Nexus Overview|Vescio Nexus · Live Executive Command Center/i)
+        .first(),
+    ).toBeVisible({
       timeout: 15000,
     });
     const overviewKpiCard = page.getByText(/Today's Nexus Revenue/i).first();

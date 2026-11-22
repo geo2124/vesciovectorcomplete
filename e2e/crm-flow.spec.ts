@@ -1,26 +1,17 @@
 import { expect, test } from "@playwright/test";
+import { ensureAuthenticated } from "./helpers/auth";
 
 test.describe("Vescio Vector CRM — Full Pipeline E2E Suite", () => {
+  test.beforeEach(async ({ page }) => {
+    await ensureAuthenticated(page);
+  });
+
   test("Full CRM Pipeline Flow: Load, Create Lead, Communication Log, Stage Update, Filter, and Cleanup", async ({
     page,
   }) => {
     const pageErrors: string[] = [];
     page.on("pageerror", (err) => {
       pageErrors.push(err.message);
-    });
-
-    await page.addInitScript(() => {
-      window.localStorage.setItem(
-        "vv_auth_session_user",
-        JSON.stringify({
-          id: "admin-1",
-          email: "geogo3@gmail.com",
-          name: "Georges Khoury",
-          role: "super_admin",
-          branch: "All",
-          tenantId: "donbosco",
-        }),
-      );
     });
 
     // -------------------------------------------------------------------------

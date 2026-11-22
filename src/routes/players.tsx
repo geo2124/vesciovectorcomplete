@@ -2936,7 +2936,7 @@ function PlayersPage() {
         submitLabel={editing ? "Save changes" : "Create player"}
         wide
       >
-        <div className="grid gap-3 p-4 sm:grid-cols-2">
+        <div className="grid items-end gap-3 p-4 sm:grid-cols-2">
           <Controller
             control={control}
             name="name"
@@ -3111,7 +3111,7 @@ function PlayersPage() {
             render={({ field }) => (
               <Field label="Branch" error={errors.branch?.message}>
                 {isBranchRestricted ? (
-                  <div className="rounded-md bg-ink-850 px-3 py-2 font-mono text-xs text-court-300 ring-1 ring-ink-700 flex items-center justify-between">
+                  <div className="h-10 rounded-md bg-ink-850 px-3 py-2 font-mono text-xs text-court-300 ring-1 ring-ink-700 flex items-center justify-between">
                     <span>{userBranch}</span>
                     <span className="text-[10px] text-ink-500 uppercase">Assigned Facility</span>
                   </div>
@@ -3129,7 +3129,7 @@ function PlayersPage() {
             <div className="font-mono text-xs font-semibold text-court-400 uppercase tracking-wide">
               Guardian 1 (Primary Contact)
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid items-end gap-3 sm:grid-cols-2">
               <Controller
                 control={control}
                 name="parent"
@@ -3166,7 +3166,7 @@ function PlayersPage() {
               </span>
               <Chip tone="neutral">OPTIONAL</Chip>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid items-end gap-3 sm:grid-cols-2">
               <Controller
                 control={control}
                 name="guardian2Name"
@@ -3261,7 +3261,7 @@ function PlayersPage() {
                 )}
               />
             ) : (
-              <div className="grid gap-3 sm:grid-cols-4 pt-2 border-t border-ink-800/80">
+              <div className="grid items-end gap-3 sm:grid-cols-4 pt-2 border-t border-ink-800/80">
                 <div className="sm:col-span-2">
                   <Field label="Insurance Company" hint="Auto-fills default basic fee">
                     <select
@@ -3275,7 +3275,7 @@ function PlayersPage() {
                           setValue("insuranceFee", comp.defaultFee);
                         }
                       }}
-                      className="w-full rounded-md border border-ink-750 bg-ink-900 px-3 py-2 text-xs text-ink-100 focus:border-court-500 focus:outline-none"
+                      className="h-10 w-full rounded-md border border-ink-750 bg-ink-900 px-3 py-2 text-xs leading-tight text-ink-100 focus:border-court-500 focus:outline-none"
                     >
                       <option value="">— Select Insurance Provider —</option>
                       {insuranceCompanies.map((c) => (
@@ -3305,7 +3305,7 @@ function PlayersPage() {
                   control={control}
                   name="insuranceExpiryDate"
                   render={({ field }) => (
-                    <Field label="Expiry Date (Optional)">
+                    <Field label="Expiry Date (Optional)" hint="Policy expiration date">
                       <Input type="date" value={field.value ?? ""} onChange={field.onChange} />
                     </Field>
                   )}
@@ -3457,7 +3457,7 @@ function PlayersPage() {
             )}
 
             {/* Point 6B: Step 1 — Select Training Package & Step 2 — Select Special Offer */}
-            <div className="grid gap-3 sm:grid-cols-2 pt-1 border-t border-ink-800/80">
+            <div className="grid items-end gap-3 sm:grid-cols-2 pt-1 border-t border-ink-800/80">
               <Field
                 label="Step 1 — Select Training Package"
                 hint="Sets monthly practice cap & base monthly price"
@@ -3486,7 +3486,7 @@ function PlayersPage() {
                       setValue("allowedPracticesPerMonth", 0);
                     }
                   }}
-                  className="w-full rounded-md border border-ink-750 bg-ink-900 px-3 py-2 text-xs text-ink-100 focus:border-court-500 focus:outline-none disabled:opacity-50"
+                  className="h-10 w-full rounded-md border border-ink-750 bg-ink-900 px-3 py-2 text-xs leading-tight text-ink-100 focus:border-court-500 focus:outline-none disabled:opacity-50"
                 >
                   <option value="">— Standard Team Fee (No Package Cap) —</option>
                   {trainingPackages.map((pkg) => (
@@ -3541,7 +3541,7 @@ function PlayersPage() {
                       setValue("fee", basePrice);
                     }
                   }}
-                  className="w-full rounded-md border border-ink-750 bg-ink-900 px-3 py-2 text-xs text-ink-100 focus:border-court-500 focus:outline-none disabled:opacity-50"
+                  className="h-10 w-full rounded-md border border-ink-750 bg-ink-900 px-3 py-2 text-xs leading-tight text-ink-100 focus:border-court-500 focus:outline-none disabled:opacity-50"
                 >
                   <option value="">— No Special Offer —</option>
                   {specialOffers
@@ -3823,7 +3823,7 @@ function PlayersPage() {
               </div>
             )}
 
-            <div className="grid gap-3 sm:grid-cols-2 pt-1 border-t border-ink-800/80">
+            <div className="grid items-end gap-3 sm:grid-cols-2 pt-1 border-t border-ink-800/80">
               <Controller
                 control={control}
                 name="fee"
@@ -4268,7 +4268,7 @@ function PlayersPage() {
               </div>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid items-end gap-3 sm:grid-cols-2">
               <Field label={`Total Payment Amount (${db.academy?.currency || "USD"})`}>
                 <Input
                   type="number"

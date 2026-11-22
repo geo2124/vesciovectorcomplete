@@ -3305,7 +3305,7 @@ export const NexusGymModule: React.FC<NexusGymModuleProps> = ({
         title={editingClientId ? "Edit Gym Client Profile" : "Enroll Gym Client"}
       >
         <div className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-3">
             <Field label="Client Type">
               <Select
                 value={clientForm.memberType}
@@ -3392,7 +3392,7 @@ export const NexusGymModule: React.FC<NexusGymModuleProps> = ({
             <div className="text-[11px] font-black uppercase tracking-wider text-amber-400">
               Emergency Contact & Medical / Fitness Goals
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 items-end gap-3">
               <Field label="Emergency Contact Name">
                 <Input
                   value={clientForm.emergencyContactName}
@@ -3422,7 +3422,7 @@ export const NexusGymModule: React.FC<NexusGymModuleProps> = ({
               </Field>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-3">
               <Field label="Primary Fitness Goals">
                 <Input
                   value={clientForm.fitnessGoals}
@@ -3449,7 +3449,7 @@ export const NexusGymModule: React.FC<NexusGymModuleProps> = ({
           </div>
 
           {/* Package Assignment */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-3">
             <Field label="Membership / Session Package">
               <Select
                 value={clientForm.packageId}
@@ -3556,7 +3556,7 @@ export const NexusGymModule: React.FC<NexusGymModuleProps> = ({
         title={editingCoachId ? "Edit Gym Coach" : "Add Gym Coach & Coach-as-Client Pool"}
       >
         <div className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-3">
             <Field label="Import Existing Academy Coach (Optional)">
               <Select
                 value=""
@@ -3731,7 +3731,7 @@ export const NexusGymModule: React.FC<NexusGymModuleProps> = ({
         title={editingPackageId ? "Edit Gym Package" : "Create Gym Package / Membership"}
       >
         <div className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-3">
             <Field label="Package Name">
               <Input
                 value={packageForm.name}
@@ -3856,7 +3856,7 @@ export const NexusGymModule: React.FC<NexusGymModuleProps> = ({
         title="Book Gym Floor, PT or Group Strength Slot"
       >
         <div className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-3">
             <Field label="Slot Type">
               <Select
                 value={slotForm.slotType}
@@ -3896,7 +3896,7 @@ export const NexusGymModule: React.FC<NexusGymModuleProps> = ({
               />
             </Field>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 items-end gap-2">
               <Field label="Start Time">
                 <Input
                   type="time"
@@ -4006,18 +4006,20 @@ export const NexusGymModule: React.FC<NexusGymModuleProps> = ({
             {activeBranchName}.
           </p>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 items-end gap-2">
             <Input
               type="date"
               value={newOffDayDate}
               onChange={(e) => setNewOffDayDate(e.target.value)}
+              className="mt-0"
             />
             <Input
               value={newOffDayReason}
               onChange={(e) => setNewOffDayReason(e.target.value)}
               placeholder="Holiday / Maintenance reason..."
+              className="mt-0"
             />
-            <Btn variant="primary" onClick={handleAddOffDay}>
+            <Btn variant="primary" size="lg" onClick={handleAddOffDay}>
               + Add Off Day
             </Btn>
           </div>
@@ -4060,7 +4062,7 @@ export const NexusGymModule: React.FC<NexusGymModuleProps> = ({
         title={`Log Body Metrics & Strength Benchmarks — ${activeProfileMember?.memberName || ""}`}
       >
         <div className="space-y-4">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 items-end gap-3">
             <Field label="Date">
               <Input
                 type="date"
@@ -4152,7 +4154,7 @@ export const NexusGymModule: React.FC<NexusGymModuleProps> = ({
         title={`Log S&C Workout — ${activeProfileMember?.memberName || ""}`}
       >
         <div className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-3">
             <Field label="Focus Area">
               <Select
                 value={workoutForm.focusArea}

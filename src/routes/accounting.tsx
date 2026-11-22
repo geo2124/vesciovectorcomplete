@@ -3121,7 +3121,7 @@ function AccountingPage() {
         submitLabel={editing ? "Save changes" : "Add entry"}
         wide
       >
-        <div className="grid gap-3 p-4 sm:grid-cols-2">
+        <div className="grid items-end gap-3 p-4 sm:grid-cols-2">
           <Field label="Date">
             <Input type="date" value={form.date} onChange={(v) => setForm({ ...form, date: v })} />
           </Field>
@@ -3180,7 +3180,7 @@ function AccountingPage() {
             form.account === "Coach Salaries" ||
             form.account === "Coach Payroll Expense" ||
             Boolean(form.coachId)) && (
-            <div className="col-span-1 sm:col-span-2 grid gap-3 sm:grid-cols-2 rounded-lg border border-amber-500/30 bg-amber-950/20 p-3">
+            <div className="col-span-1 sm:col-span-2 grid items-end gap-3 sm:grid-cols-2 rounded-lg border border-amber-500/30 bg-amber-950/20 p-3">
               <Field
                 label="Link / Validate Advance Against Sessions"
                 hint="Number of coaching sessions covered or offset by this advance"

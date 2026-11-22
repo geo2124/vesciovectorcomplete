@@ -26,5 +26,9 @@ export default defineConfig({
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,
+    env: {
+      ...process.env,
+      VITE_E2E_BYPASS_AUTH: "true",
+    },
   },
 });

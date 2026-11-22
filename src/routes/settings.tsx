@@ -408,7 +408,7 @@ function Identity() {
     <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
       <div className="space-y-4">
         <Panel title="Academy identity" meta="Used across the workspace and the coach portal">
-          <div className="grid gap-3 p-4 sm:grid-cols-2">
+          <div className="grid items-end gap-3 p-4 sm:grid-cols-2">
             <div className="sm:col-span-2">
               <Field label="Academy name">
                 <Input value={form.name} onChange={(v) => setForm({ ...form, name: v })} />
@@ -458,7 +458,7 @@ function Identity() {
                 />
               ) : (
                 <div
-                  className="mt-1.5 flex items-center justify-between rounded-md bg-ink-900/90 px-3 py-2 font-mono text-sm text-ink-400 ring-1 ring-ink-800 cursor-not-allowed select-none opacity-75"
+                  className="h-10 flex items-center justify-between rounded-md bg-ink-900/90 px-3 py-2 font-mono text-sm text-ink-400 ring-1 ring-ink-800 cursor-not-allowed select-none opacity-75"
                   title="Locked: Only geogo3@gmail.com can modify the maximum number of kids allowed in the system"
                 >
                   <span>{form.playersLimit}</span>
@@ -526,7 +526,7 @@ function Identity() {
         </Panel>
 
         <Panel title="Payment deadlines" meta="Counted from one month after registration">
-          <div className="grid gap-3 p-4 sm:grid-cols-2">
+          <div className="grid items-end gap-3 p-4 sm:grid-cols-2">
             <Field label="Soft deadline (days)" hint="shows a payment warning">
               <Input
                 type="number"
@@ -940,7 +940,7 @@ function Appearance() {
         </Panel>
 
         <Panel title="Interface" meta="Shape and density of the whole system">
-          <div className="grid gap-4 p-4 sm:grid-cols-2">
+          <div className="grid items-end gap-4 p-4 sm:grid-cols-2">
             <Field label={`Corner radius · ${form.radius}px`}>
               <input
                 type="range"
@@ -1545,7 +1545,7 @@ function DataAdmin() {
             <div className="font-mono text-[11px] font-bold uppercase text-court-400">
               {editingInsId ? "Edit Insurance Company" : "+ Add Insurance Company"}
             </div>
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid items-end gap-3 sm:grid-cols-3">
               <Field label="Company Name">
                 <Input value={insName} onChange={setInsName} placeholder="e.g. Bankers Assurance" />
               </Field>
@@ -1649,7 +1649,7 @@ function DataAdmin() {
                     placeholder="e.g. Standard Package"
                   />
                 </Field>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
                   <Field label="Practices / Month (999 = Unlimited)">
                     <Input
                       type="number"
@@ -1772,7 +1772,7 @@ function DataAdmin() {
                     placeholder="e.g. Early Bird -15%"
                   />
                 </Field>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-start">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
                   <Field label="Target Type">
                     <Select
                       value={offerTargetType}
@@ -2029,7 +2029,7 @@ function DataAdmin() {
                   </button>
                 </div>
               </div>
-              <div className="grid gap-2 sm:grid-cols-3">
+              <div className="grid items-end gap-2 sm:grid-cols-3">
                 <Field label="Category Name">
                   <Input value={draft} onChange={setDraft} placeholder="e.g. U12 or U-12" />
                 </Field>
@@ -2614,7 +2614,7 @@ function Communications() {
 
                 <div className="p-4 space-y-4">
                   {/* Template & Variable Context Selectors */}
-                  <div className="grid gap-3 sm:grid-cols-2 rounded-lg border border-ink-800 bg-ink-950/70 p-3">
+                  <div className="grid items-end gap-3 sm:grid-cols-2 rounded-lg border border-ink-800 bg-ink-950/70 p-3">
                     <Field
                       label="Notification Template"
                       hint="Use a saved custom template or standard format"
@@ -2622,7 +2622,7 @@ function Communications() {
                       <select
                         value={selectedTemplateId}
                         onChange={(e) => setSelectedTemplateId(e.target.value)}
-                        className="mt-1.5 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm text-ink-100 ring-1 ring-ink-700 focus:outline-none focus:ring-1 focus:ring-court-500"
+                        className="h-10 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm leading-tight text-ink-100 ring-1 ring-ink-700 focus:outline-none focus:ring-1 focus:ring-court-500"
                       >
                         <option value="auto">Standard Auto-Formatter</option>
                         {savedTemplates.map((tpl) => (
@@ -2640,7 +2640,7 @@ function Communications() {
                       <select
                         value={selectedPlayerId}
                         onChange={(e) => setSelectedPlayerId(e.target.value)}
-                        className="mt-1.5 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm text-ink-100 ring-1 ring-ink-700 focus:outline-none focus:ring-1 focus:ring-court-500"
+                        className="h-10 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm leading-tight text-ink-100 ring-1 ring-ink-700 focus:outline-none focus:ring-1 focus:ring-court-500"
                       >
                         <option value="">All Squad Athletes (Generic)</option>
                         {db.players.map((p) => (
@@ -2652,7 +2652,7 @@ function Communications() {
                     </Field>
                   </div>
 
-                  <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="grid items-end gap-3 sm:grid-cols-2">
                     {/* Source Selection */}
                     {pushMode === "game" && (
                       <Field
@@ -2663,7 +2663,7 @@ function Communications() {
                           <select
                             value={selectedGameId}
                             onChange={(e) => setSelectedGameId(e.target.value)}
-                            className="mt-1.5 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm text-ink-100 ring-1 ring-ink-700 focus:outline-none focus:ring-1 focus:ring-court-500"
+                            className="h-10 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm leading-tight text-ink-100 ring-1 ring-ink-700 focus:outline-none focus:ring-1 focus:ring-court-500"
                           >
                             {games.map((g) => (
                               <option key={g.id} value={g.id}>
@@ -2688,7 +2688,7 @@ function Communications() {
                           <select
                             value={selectedSessionId}
                             onChange={(e) => setSelectedSessionId(e.target.value)}
-                            className="mt-1.5 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm text-ink-100 ring-1 ring-ink-700 focus:outline-none focus:ring-1 focus:ring-court-500"
+                            className="h-10 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm leading-tight text-ink-100 ring-1 ring-ink-700 focus:outline-none focus:ring-1 focus:ring-court-500"
                           >
                             {sessions.map((s) => (
                               <option key={s.id} value={s.id}>
@@ -2944,7 +2944,7 @@ function Communications() {
                   <select
                     value={groupForm.coachLevel}
                     onChange={(e) => setGroupForm({ ...groupForm, coachLevel: e.target.value })}
-                    className="mt-1.5 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm text-ink-100 ring-1 ring-ink-700 focus:outline-none focus:ring-1 focus:ring-court-500"
+                    className="h-10 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm leading-tight text-ink-100 ring-1 ring-ink-700 focus:outline-none focus:ring-1 focus:ring-court-500"
                   >
                     {coachLevels.map((lvl) => (
                       <option key={lvl} value={lvl}>
@@ -2960,7 +2960,7 @@ function Communications() {
                   <select
                     value={groupForm.branchId}
                     onChange={(e) => setGroupForm({ ...groupForm, branchId: e.target.value })}
-                    className="mt-1.5 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm text-ink-100 ring-1 ring-ink-700 focus:outline-none focus:ring-1 focus:ring-court-500"
+                    className="h-10 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm leading-tight text-ink-100 ring-1 ring-ink-700 focus:outline-none focus:ring-1 focus:ring-court-500"
                   >
                     {db.branches.map((b) => (
                       <option key={b.id} value={b.id}>
@@ -2976,7 +2976,7 @@ function Communications() {
                   <select
                     value={groupForm.teamId}
                     onChange={(e) => setGroupForm({ ...groupForm, teamId: e.target.value })}
-                    className="mt-1.5 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm text-ink-100 ring-1 ring-ink-700 focus:outline-none focus:ring-1 focus:ring-court-500"
+                    className="h-10 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm leading-tight text-ink-100 ring-1 ring-ink-700 focus:outline-none focus:ring-1 focus:ring-court-500"
                   >
                     {db.teams.map((t) => (
                       <option key={t.id} value={t.id}>
@@ -3019,7 +3019,7 @@ function Communications() {
                 />
               </Field>
 
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid items-end gap-3 sm:grid-cols-2">
                 <Field label="Admin / Contact Person">
                   <Input
                     value={groupForm.contactName}

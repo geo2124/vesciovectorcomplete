@@ -1851,14 +1851,14 @@ function CrmPipelinePage() {
         >
           {editingLead && (
             <div className="space-y-4 p-4">
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid items-end gap-3 sm:grid-cols-3">
                 <Field label="Player Full Name *">
                   <input
                     type="text"
                     value={editingLead.playerName}
                     onChange={(e) => setEditingLead({ ...editingLead, playerName: e.target.value })}
                     placeholder="e.g., Karim Mansour"
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs"
+                    className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs leading-tight"
                   />
                 </Field>
                 <Field label="Pipeline Stage">
@@ -1867,7 +1867,7 @@ function CrmPipelinePage() {
                     onChange={(e) =>
                       setEditingLead({ ...editingLead, stage: e.target.value as CrmStage })
                     }
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs font-semibold"
+                    className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs font-semibold leading-tight"
                   >
                     {CRM_STAGE_CONFIG.map((st) => (
                       <option key={st.id} value={st.id}>
@@ -1881,17 +1881,17 @@ function CrmPipelinePage() {
                     type="date"
                     value={editingLead.dob || ""}
                     onChange={(e) => setEditingLead({ ...editingLead, dob: e.target.value })}
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 font-mono text-xs"
+                    className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 font-mono text-xs leading-tight"
                   />
                 </Field>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-4">
+              <div className="grid items-end gap-3 sm:grid-cols-4">
                 <Field label="Age Category">
                   <select
                     value={editingLead.category || "U-14"}
                     onChange={(e) => setEditingLead({ ...editingLead, category: e.target.value })}
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs"
+                    className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs leading-tight"
                   >
                     {(
                       db.lists?.["Age categories"] || [
@@ -1915,7 +1915,7 @@ function CrmPipelinePage() {
                     onChange={(e) =>
                       setEditingLead({ ...editingLead, preferredBranch: e.target.value })
                     }
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs"
+                    className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs leading-tight"
                   >
                     {(db.branches || []).map((b) => (
                       <option key={b.id} value={b.name}>
@@ -1931,7 +1931,7 @@ function CrmPipelinePage() {
                     onChange={(e) =>
                       setEditingLead({ ...editingLead, preferredPosition: e.target.value })
                     }
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs"
+                    className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs leading-tight"
                   >
                     {BASKETBALL_POSITIONS.map((pos) => (
                       <option key={pos} value={pos}>
@@ -1944,7 +1944,7 @@ function CrmPipelinePage() {
                   <select
                     value={editingLead.source || LEAD_SOURCES[0]}
                     onChange={(e) => setEditingLead({ ...editingLead, source: e.target.value })}
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs"
+                    className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs leading-tight"
                   >
                     {LEAD_SOURCES.map((src) => (
                       <option key={src} value={src}>
@@ -1955,14 +1955,14 @@ function CrmPipelinePage() {
                 </Field>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid items-end gap-3 sm:grid-cols-3">
                 <Field label="Parent / Guardian Name">
                   <input
                     type="text"
                     value={editingLead.parentName || ""}
                     onChange={(e) => setEditingLead({ ...editingLead, parentName: e.target.value })}
                     placeholder="Parent Full Name"
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs"
+                    className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs leading-tight"
                   />
                 </Field>
                 <Field label="Parent Phone (WhatsApp)">
@@ -1973,7 +1973,7 @@ function CrmPipelinePage() {
                       setEditingLead({ ...editingLead, parentPhone: e.target.value })
                     }
                     placeholder="+961 3 000 000"
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 font-mono text-xs"
+                    className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 font-mono text-xs leading-tight"
                   />
                 </Field>
                 <Field label="Parent Email">
@@ -1984,7 +1984,7 @@ function CrmPipelinePage() {
                       setEditingLead({ ...editingLead, parentEmail: e.target.value })
                     }
                     placeholder="parent@example.com"
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 font-mono text-xs"
+                    className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 font-mono text-xs leading-tight"
                   />
                 </Field>
               </div>
@@ -1994,7 +1994,7 @@ function CrmPipelinePage() {
                 <div className="mb-2 font-mono text-[10px] font-bold tracking-wider text-indigo-600 uppercase dark:text-indigo-300">
                   Trial Session Evaluation Link (For Trial Scheduled Stage)
                 </div>
-                <div className="grid gap-3 sm:grid-cols-3">
+                <div className="grid items-end gap-3 sm:grid-cols-3">
                   <Field label="Link to Existing Team Session">
                     <select
                       value={editingLead.trialSessionId || ""}
@@ -2007,7 +2007,7 @@ function CrmPipelinePage() {
                           trialTeam: sess?.team || sess?.teamA || editingLead.trialTeam,
                         });
                       }}
-                      className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs"
+                      className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs leading-tight"
                     >
                       <option value="">— Select Team Session —</option>
                       {(db.sessions || []).map((s) => (
@@ -2023,7 +2023,7 @@ function CrmPipelinePage() {
                       onChange={(e) =>
                         setEditingLead({ ...editingLead, trialTeam: e.target.value })
                       }
-                      className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs"
+                      className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs leading-tight"
                     >
                       <option value="">— Select Squad —</option>
                       {(db.teams || []).map((t) => (
@@ -2043,7 +2043,7 @@ function CrmPipelinePage() {
                           offeredMonthlyFee: Number(e.target.value) || 0,
                         })
                       }
-                      className="w-full rounded-xl border border-border bg-background px-3 py-2 font-mono text-xs"
+                      className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 font-mono text-xs leading-tight"
                     />
                   </Field>
                 </div>
@@ -2063,7 +2063,7 @@ function CrmPipelinePage() {
                         setEditingLead({ ...editingLead, churnReason: e.target.value })
                       }
                       placeholder="e.g., Exam schedule conflict / Injury / Relocation"
-                      className="w-full rounded-xl border border-border bg-background px-3 py-1.5 text-xs"
+                      className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs leading-tight"
                     />
                   </Field>
                   <div className="mt-2">
@@ -2075,7 +2075,7 @@ function CrmPipelinePage() {
                           setEditingLead({ ...editingLead, reEngagementNotes: e.target.value })
                         }
                         placeholder="e.g., Invite to Summer Camp in June"
-                        className="w-full rounded-xl border border-border bg-background px-3 py-1.5 text-xs"
+                        className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs leading-tight"
                       />
                     </Field>
                   </div>
@@ -2085,7 +2085,7 @@ function CrmPipelinePage() {
                   <div className="mb-2 font-mono text-[10px] font-bold tracking-wider text-teal-600 uppercase dark:text-teal-300">
                     Aftersales & Retention
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 items-end gap-2">
                     <Field label="Retention Track">
                       <select
                         value={editingLead.aftersalesCategory || "Parent Check-In"}
@@ -2095,7 +2095,7 @@ function CrmPipelinePage() {
                             aftersalesCategory: e.target.value as CrmLead["aftersalesCategory"],
                           })
                         }
-                        className="w-full rounded-xl border border-border bg-background px-2.5 py-1.5 text-xs"
+                        className="h-10 w-full rounded-xl border border-border bg-background px-2.5 py-2 text-xs leading-tight"
                       >
                         <option value="Parent Check-In">Parent Check-In</option>
                         <option value="Gear / Uniform Upsell">Gear / Uniform Upsell</option>
@@ -2112,7 +2112,7 @@ function CrmPipelinePage() {
                             campInviteStatus: e.target.value as CrmLead["campInviteStatus"],
                           })
                         }
-                        className="w-full rounded-xl border border-border bg-background px-2.5 py-1.5 text-xs"
+                        className="h-10 w-full rounded-xl border border-border bg-background px-2.5 py-2 text-xs leading-tight"
                       >
                         <option value="Not Sent">Not Sent</option>
                         <option value="Invited">Invited</option>
@@ -2130,14 +2130,14 @@ function CrmPipelinePage() {
                           setEditingLead({ ...editingLead, gearUpsellNotes: e.target.value })
                         }
                         placeholder="e.g., Needs reversible jersey size YL + warmup hoodie"
-                        className="w-full rounded-xl border border-border bg-background px-3 py-1.5 text-xs"
+                        className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs leading-tight"
                       />
                     </Field>
                   </div>
                 </div>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid items-end gap-3 sm:grid-cols-2">
                 <Field label="Medical / Allergy Notes">
                   <input
                     type="text"
@@ -2146,7 +2146,7 @@ function CrmPipelinePage() {
                       setEditingLead({ ...editingLead, medicalNotes: e.target.value })
                     }
                     placeholder="Asthma inhaler, ankle brace, etc."
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs"
+                    className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs leading-tight"
                   />
                 </Field>
                 <Field label="General Scouting / Evaluation Notes">
@@ -2157,7 +2157,7 @@ function CrmPipelinePage() {
                       setEditingLead({ ...editingLead, generalNotes: e.target.value })
                     }
                     placeholder="Strong left-hand drive, high defensive energy..."
-                    className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs"
+                    className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 text-xs leading-tight"
                   />
                 </Field>
               </div>

@@ -72,6 +72,7 @@ import {
   normalizeUiRole,
   isSuperAdminRoleOrEmail,
   isTenantAdminRoleOrEmail,
+  isE2EBypassEnabled,
 } from "./auth";
 import { getTenantSlug } from "./utils";
 import { toast } from "sonner";
@@ -3435,6 +3436,7 @@ export function canUserViewStaffSalary(ctxOverride?: ActiveRoleAccessContext): b
 
 async function ensureAuthForWrite(): Promise<boolean> {
   if (auth?.currentUser && !auth.currentUser.isAnonymous) return true;
+  if (isE2EBypassEnabled()) return false;
   const waitedUser = await new Promise<{ isAnonymous?: boolean } | null>((resolve) => {
     if (!auth) return resolve(null);
     if (auth.currentUser && !auth.currentUser.isAnonymous) return resolve(auth.currentUser);
@@ -4302,7 +4304,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       if (previousState !== nextState) {
         void (async () => {
           try {
-            await ensureAuthForWrite();
+            const hasAuth = await ensureAuthForWrite();
+            if (!hasAuth && isE2EBypassEnabled()) return;
             await syncToFirestore(tenantId, previousState, nextState);
           } catch (err: unknown) {
             console.error("Firestore sync error in update():", err);
@@ -4439,7 +4442,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setDb((prev) => ({ ...prev, players: nextPlayers }));
 
       try {
-        await ensureAuthForWrite();
+        const hasAuth = await ensureAuthForWrite();
+        if (!hasAuth && isE2EBypassEnabled()) return;
         for (const [pid, patch] of updatedPlayerMap.entries()) {
           await atomicUpdateItem(
             tenantId,
@@ -4504,7 +4508,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       dbStore.setSlice(collectionName, updated as DB[K]);
 
       try {
-        await ensureAuthForWrite();
+        const hasAuth = await ensureAuthForWrite();
+        if (!hasAuth && isE2EBypassEnabled()) return;
         await atomicSetItem(tenantId, collectionName, (item as { id: string }).id, item);
         if (collectionName === "sessions") {
           const sItem = item as unknown as SessionItem;
@@ -4553,7 +4558,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       dbStore.setSlice(collectionName, updated as DB[K]);
 
       try {
-        await ensureAuthForWrite();
+        const hasAuth = await ensureAuthForWrite();
+        if (!hasAuth && isE2EBypassEnabled()) return;
         const userItem =
           collectionName === "users"
             ? (previousSlice.find((x) => x.id === id) as UserAccount | undefined)
@@ -4611,7 +4617,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       dbStore.setSlice(collectionName, updated as DB[K]);
 
       try {
-        await ensureAuthForWrite();
+        const hasAuth = await ensureAuthForWrite();
+        if (!hasAuth && isE2EBypassEnabled()) return;
         await atomicUpdateItem(tenantId, collectionName, id, partial as Record<string, unknown>);
         if (collectionName === "sessions") {
           const mergedSession = updated.find((x) => x.id === id) as unknown as
@@ -4684,7 +4691,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       );
 
       try {
-        await ensureAuthForWrite();
+        const hasAuth = await ensureAuthForWrite();
+        if (!hasAuth && isE2EBypassEnabled()) return optimisticBranch;
         const committedBranch = await atomicRunBranchTransaction(
           tenantId,
           targetId,
@@ -4724,7 +4732,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setDb(nextDb);
 
       try {
-        await ensureAuthForWrite();
+        const hasAuth = await ensureAuthForWrite();
+        if (!hasAuth && isE2EBypassEnabled()) {
+          return {
+            updatedRecordsCount: Math.max(0, batchOps.length - 1),
+            branchRecord: updatedBranchRecord,
+          };
+        }
         await atomicBatchSaveEntities(tenantId, batchOps);
         return {
           updatedRecordsCount: Math.max(0, batchOps.length - 1),
@@ -4808,6 +4822,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       }));
 
       try {
+        const hasAuth = await ensureAuthForWrite();
+        if (!hasAuth && isE2EBypassEnabled()) return;
         await atomicRecordAttendance(
           tenantId,
           sessionId,

@@ -2686,7 +2686,7 @@ export function NexusCourtReservationsModule({
             its calculated rate and fee directly onto the booking document when confirmed.
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid items-end gap-3 sm:grid-cols-2">
             <Field label="1. Half Court Rate (Hourly)" hint="Applied to HCA or HCB hourly bookings">
               <Input
                 type="number"
@@ -2710,7 +2710,7 @@ export function NexusCourtReservationsModule({
             <div className="font-display text-sm font-semibold text-ink-100">
               3. Private Rate Structure
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid items-end gap-3 sm:grid-cols-2">
               <Field label="Base Fee (1 Client)" hint="Fixed base fee covering the first player">
                 <Input
                   type="number"
@@ -2755,7 +2755,7 @@ export function NexusCourtReservationsModule({
             <div className="font-display text-sm font-semibold text-ink-100">
               Add New Off Day / Closure
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid items-end gap-3 sm:grid-cols-2">
               <Field label="Closure Date">
                 <Input type="date" value={newOffDayDate} onChange={setNewOffDayDate} />
               </Field>
@@ -2823,7 +2823,7 @@ export function NexusCourtReservationsModule({
       >
         <div className="p-4 space-y-5">
           {/* Section 1: Client / Entity Identification */}
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid items-end gap-3 sm:grid-cols-3">
             <Field label="Client Category">
               <Select
                 value={bookingForm.clientType}
@@ -3246,8 +3246,10 @@ export function NexusCourtReservationsModule({
             </div>
 
             <div className="grid items-end gap-3 sm:grid-cols-3">
-              <div className="block min-w-0">
-                <span className="label-mono whitespace-nowrap">Fee Waiver</span>
+              <div className="flex h-full min-w-0 flex-col justify-end">
+                <span className="label-mono mb-1.5 block text-[11px] leading-snug whitespace-nowrap">
+                  Fee Waiver
+                </span>
                 <button
                   type="button"
                   role="switch"
@@ -3256,7 +3258,7 @@ export function NexusCourtReservationsModule({
                   onClick={() =>
                     setBookingForm({ ...bookingForm, freePass: !bookingForm.freePass })
                   }
-                  className={`mt-1.5 flex h-10 w-full items-center gap-2.5 rounded-md px-3 text-left ring-1 transition-colors ${
+                  className={`flex h-10 w-full items-center gap-2.5 rounded-md px-3 text-left ring-1 transition-colors ${
                     bookingForm.freePass
                       ? "bg-court-500/10 ring-court-500/40"
                       : "bg-ink-850 ring-ink-700 hover:ring-ink-600"
@@ -3286,7 +3288,7 @@ export function NexusCourtReservationsModule({
                   value={bookingForm.discountPercent}
                   onChange={(v) => setBookingForm({ ...bookingForm, discountPercent: v })}
                   placeholder="0"
-                  className="mt-1.5 h-10 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm text-ink-100 ring-1 ring-ink-700 placeholder:text-ink-400 focus:outline-none focus:ring-court-500/60 tabular-nums disabled:opacity-50"
+                  className="tabular-nums disabled:opacity-50"
                 />
               </Field>
 
@@ -3297,7 +3299,7 @@ export function NexusCourtReservationsModule({
                   value={bookingForm.discountFixedAmount}
                   onChange={(v) => setBookingForm({ ...bookingForm, discountFixedAmount: v })}
                   placeholder="0"
-                  className="mt-1.5 h-10 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm text-ink-100 ring-1 ring-ink-700 placeholder:text-ink-400 focus:outline-none focus:ring-court-500/60 tabular-nums disabled:opacity-50"
+                  className="tabular-nums disabled:opacity-50"
                 />
               </Field>
             </div>
@@ -3393,7 +3395,7 @@ export function NexusCourtReservationsModule({
                   <span>Complete Session &amp; Cash In to Financial Ledger</span>
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid items-end gap-3 sm:grid-cols-2">
                   <Field
                     label="Final Payable Amount to Cash In"
                     hint="Confirm final amount collected for this session"
@@ -3410,7 +3412,7 @@ export function NexusCourtReservationsModule({
                     />
                   </Field>
 
-                  <Field label="Payment Method">
+                  <Field label="Payment Method" hint="Select settlement channel for ledger posting">
                     <Select
                       value={cashInPaymentMethod}
                       onChange={(v) =>

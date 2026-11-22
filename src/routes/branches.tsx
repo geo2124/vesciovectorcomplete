@@ -1432,7 +1432,7 @@ function BranchesPage() {
         submitLabel={editing ? "Save changes" : "Create branch"}
         wide
       >
-        <div className="grid gap-3 p-4 sm:grid-cols-2 min-w-0 max-w-full overflow-x-hidden box-border">
+        <div className="grid items-end gap-3 p-4 sm:grid-cols-2 min-w-0 max-w-full overflow-x-hidden box-border">
           <div className="min-w-0">
             <Field label="Branch name">
               <Input
@@ -1517,7 +1517,7 @@ function BranchesPage() {
                   </Field>
                 </div>
                 <div className="min-w-0 space-y-1.5">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 min-w-0">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-2 min-w-0">
                     <div className="min-w-0">
                       <Field label="Rental Type">
                         <Select
@@ -1822,7 +1822,7 @@ function BranchesPage() {
                     </label>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 items-start min-w-0">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 items-end min-w-0">
                     <div className="min-w-0">
                       <span className="text-[10px] font-mono uppercase text-court-300 font-semibold block mb-1">
                         Full Court Hourly Rate ({currency}/hr)
@@ -1911,7 +1911,7 @@ function BranchesPage() {
                             return syncBranchRentFromCourts(prev, nextCourts);
                           });
                         }}
-                        className="w-full min-w-0 rounded-md bg-ink-850 px-2.5 py-1.5 font-mono text-xs text-ink-100 ring-1 ring-ink-700 focus:outline-none focus:ring-court-500"
+                        className="h-10 w-full min-w-0 rounded-md bg-ink-850 px-2.5 py-1.5 font-mono text-xs leading-tight text-ink-100 ring-1 ring-ink-700 focus:outline-none focus:ring-court-500"
                       >
                         <option value="per_hour">Per Hour Rate (Full / Half Court)</option>
                         <option value="per_session">Per Session Rate</option>

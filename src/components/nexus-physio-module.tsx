@@ -1899,7 +1899,7 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
             </div>
 
             {/* Filter Bar by Practitioner, Room, Status */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-ink-800">
+            <div className="grid grid-cols-1 sm:grid-cols-3 items-end gap-3 pt-3 border-t border-ink-800">
               <Field label="Filter by Practitioner">
                 <Select
                   value={filterPractitionerId}
@@ -3069,7 +3069,7 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
             <div className="text-[11px] font-black uppercase tracking-wider text-rose-400">
               1. Personal Demographics &amp; Emergency Contact
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 items-end gap-3">
               <Field label="Patient Category">
                 <Select
                   value={intakeForm.patientType}
@@ -3200,7 +3200,7 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
             <div className="text-[11px] font-black uppercase tracking-wider text-amber-400">
               2. Medical History, Allergies / Contraindications &amp; Referral
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-3">
               <Field label="Medical & Surgical History">
                 <Input
                   value={intakeForm.medicalHistory}
@@ -3246,7 +3246,7 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
             <div className="text-[11px] font-black uppercase tracking-wider text-sky-400">
               3. Primary Complaint, Injury Area &amp; Clinical Diagnosis
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 items-end gap-3">
               <Field label="Anatomical Injury Area">
                 <Select
                   value={intakeForm.injuryArea}
@@ -3302,7 +3302,7 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
               </Field>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-3">
               <Field label="Primary Complaint & Clinical Diagnosis">
                 <Input
                   value={intakeForm.diagnosis}
@@ -3325,7 +3325,7 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
             <div className="text-[11px] font-black uppercase tracking-wider text-emerald-400">
               4. Insurance, Rehab Package &amp; Billing Setup
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-3">
               <Field label="Billing Model">
                 <Select
                   value={intakeForm.billingType}
@@ -3417,7 +3417,7 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
             </div>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-3">
             <Field label="Patient">
               <Select
                 value={apptForm.patientRecordId}
@@ -3490,7 +3490,7 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
               />
             </Field>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 items-end gap-2">
               <Field label="Start Time">
                 <Input
                   type="time"
@@ -3558,7 +3558,7 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
       >
         {completingAppt && (
           <div className="space-y-4">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-3">
               <Field label="S — Subjective (Patient Reported)">
                 <Textarea
                   rows={2}
@@ -3609,7 +3609,7 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
               </Field>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 items-end gap-3">
               <Field label="Pain Score (0–10 VAS)">
                 <Input
                   type="number"
@@ -3695,7 +3695,7 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
         title={editingPractitionerId ? "Edit Practitioner" : "Add Physiotherapist / Doctor"}
       >
         <div className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-3">
             <Field label="Practitioner Name">
               <Input
                 value={practitionerForm.name}
@@ -3825,7 +3825,7 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
               onChange={(e) => setRoomForm((f) => ({ ...f, name: e.target.value }))}
             />
           </Field>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-3">
             <Field label="Room Type">
               <Select
                 value={roomForm.roomType}
@@ -3891,7 +3891,7 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
               onChange={(e) => setExerciseForm((f) => ({ ...f, exerciseName: e.target.value }))}
             />
           </Field>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 items-end gap-3">
             <Field label="Sets / Reps / Tempo / Load">
               <Input
                 value={exerciseForm.setsRepsTempo}
@@ -3992,7 +3992,7 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
               placeholder="e.g., 6-Session Rotator Cuff Rehab Protocol"
             />
           </Field>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 items-end gap-3">
             <Field label="Sessions Included">
               <Input
                 type="number"

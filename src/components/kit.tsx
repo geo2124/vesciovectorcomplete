@@ -376,11 +376,11 @@ export function Row({
 
 export function FieldGrid({ fields }: { fields: { label: string; hint?: string }[] }) {
   return (
-    <div className="grid gap-3 p-4 sm:grid-cols-2">
+    <div className="grid items-end gap-3 p-4 sm:grid-cols-2">
       {fields.map((f) => (
-        <label key={f.label} className="block">
-          <span className="label-mono">{f.label}</span>
-          <div className="mt-1.5 rounded-md bg-ink-850 px-3 py-2 text-sm text-ink-400 ring-1 ring-ink-700">
+        <label key={f.label} className="flex h-full min-w-0 flex-col justify-end">
+          <span className="label-mono block text-[11px] leading-snug mb-1.5">{f.label}</span>
+          <div className="flex h-10 items-center rounded-md bg-ink-850 px-3 py-2 text-sm leading-tight text-ink-400 ring-1 ring-ink-700">
             {f.hint ?? "—"}
           </div>
         </label>
@@ -441,17 +441,23 @@ export function Field({
   hint,
   error,
   labelClassName,
+  className,
   children,
 }: {
   label: string;
   hint?: string | undefined;
   error?: string | undefined;
   labelClassName?: string | undefined;
+  className?: string | undefined;
   children: ReactNode;
 }) {
   return (
-    <label className="block min-w-0">
-      <span className={cn("label-mono", labelClassName)}>{label}</span>
+    <label
+      className={cn("flex h-full min-w-0 flex-col justify-end [&>*:nth-child(2)]:mt-0", className)}
+    >
+      <span className={cn("label-mono block text-[11px] leading-snug mb-1.5", labelClassName)}>
+        {label}
+      </span>
       {children}
       {error ? (
         <span className="mt-1 block font-mono text-[10px] text-warn">{error}</span>
@@ -463,7 +469,10 @@ export function Field({
 }
 
 const controlCls =
-  "mt-1.5 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm text-ink-100 ring-1 ring-ink-700 placeholder:text-ink-400 focus:outline-none focus:ring-court-500/60";
+  "mt-1.5 h-10 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm leading-tight text-ink-100 ring-1 ring-ink-700 placeholder:text-ink-400 focus:outline-none focus:ring-court-500/60";
+
+const textareaControlCls =
+  "mt-1.5 w-full rounded-md bg-ink-850 px-3 py-2 font-ui text-sm leading-tight text-ink-100 ring-1 ring-ink-700 placeholder:text-ink-400 focus:outline-none focus:ring-court-500/60";
 
 function invokeChangeHandler<T extends HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -623,7 +632,7 @@ export function Textarea({
       value={value ?? ""}
       placeholder={placeholder ?? ""}
       onChange={(e) => invokeChangeHandler(onChange, e)}
-      className={cn(controlCls, className)}
+      className={cn(textareaControlCls, className)}
     />
   );
 }
