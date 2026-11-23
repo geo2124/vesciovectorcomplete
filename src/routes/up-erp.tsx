@@ -45,6 +45,26 @@ import {
   type Court,
   type PosCatalogItem,
 } from "@/lib/data-store";
+import { normalizeDoubleEntryLedger, type LedgerModule } from "@/lib/accounting-coa";
+
+const NEXUS_EXPENSE_MODULE_OPTIONS: Array<{ label: string; value: LedgerModule }> = [
+  { label: "Nexus Courts", value: "courts" },
+  { label: "Nexus Gym", value: "gym" },
+  { label: "Nexus Physio", value: "physio" },
+  { label: "Nexus Kiosk POS", value: "pos" },
+  { label: "Academy", value: "academy" },
+  { label: "Merchandise", value: "merchandise" },
+  { label: "General / Shared", value: "general" },
+];
+
+const NEXUS_EXPENSE_CATEGORIES = [
+  "Equipment & Maintenance",
+  "Utilities & Internet",
+  "Facility Fixed Rent & Lease",
+  "Medical & Clinic Consumables",
+  "Kiosk POS Cost of Goods Sold (COGS)",
+  "Marketing & Administrative",
+];
 
 export const Route = createFileRoute("/up-erp")({
   head: () => ({
@@ -86,6 +106,23 @@ function VescioNexusHub() {
   const [branchFilter, setBranchFilter] = useState<string>("All");
   const [isFullScreen, setIsFullScreen] = useState(false);
 
+  const [nexusExpenseOpen, setNexusExpenseOpen] = useState(false);
+  const [nexusExpenseForm, setNexusExpenseForm] = useState<{
+    module: LedgerModule;
+    account: string;
+    amount: string;
+    branch: string;
+    paymentMethod: string;
+    note: string;
+  }>({
+    module: "general",
+    account: "Equipment & Maintenance",
+    amount: "",
+    branch: "",
+    paymentMethod: "Cash",
+    note: "",
+  });
+
   const isLaunchedModule =
     activeModule === "courts" ||
     activeModule === "gym" ||
@@ -108,6 +145,59 @@ function VescioNexusHub() {
 
   const defaultBranchName = branches[0]?.name || "Main Branch";
   const activeScopedBranchName = branchFilter !== "All" ? branchFilter : defaultBranchName;
+
+  const openQuickNexusExpenseModal = () => {
+    const pretaggedModule: LedgerModule =
+      activeModule === "courts" ||
+      activeModule === "gym" ||
+      activeModule === "physio" ||
+      activeModule === "pos"
+        ? activeModule
+        : "general";
+    const defaultCategory =
+      pretaggedModule === "physio"
+        ? "Medical & Clinic Consumables"
+        : pretaggedModule === "pos"
+          ? "Kiosk POS Cost of Goods Sold (COGS)"
+          : "Equipment & Maintenance";
+    setNexusExpenseForm({
+      module: pretaggedModule,
+      account: defaultCategory,
+      amount: "",
+      branch: activeScopedBranchName,
+      paymentMethod: "Cash",
+      note: "",
+    });
+    setNexusExpenseOpen(true);
+  };
+
+  const handleSaveNexusModuleExpense = async () => {
+    const parsedAmount = Number(nexusExpenseForm.amount) || 0;
+    if (parsedAmount <= 0) {
+      toast.error("Please enter a valid expense amount greater than $0.");
+      return;
+    }
+    const moduleLabel =
+      NEXUS_EXPENSE_MODULE_OPTIONS.find((m) => m.value === nexusExpenseForm.module)?.label ||
+      "Vescio Nexus";
+    const entry = normalizeDoubleEntryLedger({
+      id: uid("led-nx-exp"),
+      date: todayISO(),
+      account: nexusExpenseForm.account,
+      category: nexusExpenseForm.account,
+      entry: `[${moduleLabel}] ${nexusExpenseForm.account}${nexusExpenseForm.note.trim() ? ` · ${nexusExpenseForm.note.trim()}` : ""}`,
+      type: "Expense",
+      amount: Math.abs(parsedAmount),
+      status: "Paid",
+      paymentMethod: nexusExpenseForm.paymentMethod || "Cash",
+      branch: nexusExpenseForm.branch || activeScopedBranchName,
+      module: nexusExpenseForm.module,
+      note: nexusExpenseForm.note.trim() || `Logged from Vescio Nexus (${moduleLabel})`,
+    });
+    await setEntity("ledger", entry);
+    toast.success(`Logged ${money(parsedAmount)} expense under ${moduleLabel}.`);
+    setNexusExpenseOpen(false);
+  };
 
   const activeBranchObj = useMemo(
     () =>
@@ -1033,6 +1123,15 @@ function VescioNexusHub() {
 
               <button
                 type="button"
+                onClick={openQuickNexusExpenseModal}
+                className="inline-flex items-center gap-1.5 rounded-md bg-rose-500/15 px-2.5 py-1.5 font-mono text-xs font-semibold text-rose-300 ring-1 ring-rose-500/35 transition-all hover:bg-rose-500/25"
+              >
+                <Wallet className="h-3.5 w-3.5 shrink-0" />
+                <span>+ Log Expense</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setIsFullScreen(false)}
                 title="Exit Full Screen (Esc)"
                 className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/20 px-3 py-1.5 font-mono text-xs font-bold text-emerald-200 ring-1 ring-emerald-500/40 transition-all hover:bg-emerald-500/30"
@@ -1165,6 +1264,15 @@ function VescioNexusHub() {
                 </select>
               </div>
 
+              <button
+                type="button"
+                onClick={openQuickNexusExpenseModal}
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-rose-500/15 px-2.5 py-1.5 font-mono text-xs font-semibold text-rose-300 ring-1 ring-rose-500/35 transition-all hover:bg-rose-500/25"
+              >
+                <Wallet className="h-3.5 w-3.5 shrink-0" />
+                <span>+ Log Expense</span>
+              </button>
+
               {/* Standalone / Full-Screen Toggle Button */}
               <button
                 type="button"
@@ -1233,6 +1341,15 @@ function VescioNexusHub() {
                   ))}
                 </select>
               </div>
+
+              <button
+                type="button"
+                onClick={openQuickNexusExpenseModal}
+                className="inline-flex items-center gap-1.5 rounded-md bg-rose-500/15 px-2.5 py-1.5 font-mono text-xs font-semibold text-rose-300 ring-1 ring-rose-500/35 hover:bg-rose-500/25"
+              >
+                <Wallet className="h-3.5 w-3.5 text-rose-400" />
+                <span>+ Log Expense</span>
+              </button>
 
               <button
                 type="button"
@@ -2764,6 +2881,91 @@ function VescioNexusHub() {
             <Button onClick={() => void handleSaveNexusBranch()}>
               {editingBranchId ? "Save Branch Changes" : "Create Nexus Branch"}
             </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* =================================================================== */}
+      {/* MODAL 1: QUICK MODULE-SCOPED EXPENSE LOGGER                         */}
+      {/* =================================================================== */}
+      <Modal
+        open={nexusExpenseOpen}
+        title="Log Nexus Module Expense"
+        meta="Post an operating or direct module expense directly to the double-entry accounting ledger"
+        onClose={() => setNexusExpenseOpen(false)}
+      >
+        <div className="space-y-4 p-4">
+          <div className="grid items-end gap-3 sm:grid-cols-2">
+            <Field label="Module / Cost Center">
+              <Select
+                value={nexusExpenseForm.module}
+                onChange={(v) =>
+                  setNexusExpenseForm({ ...nexusExpenseForm, module: v as LedgerModule })
+                }
+                options={NEXUS_EXPENSE_MODULE_OPTIONS}
+                className="h-10"
+              />
+            </Field>
+            <Field label="Expense Account / Category">
+              <Select
+                value={nexusExpenseForm.account}
+                onChange={(v) => setNexusExpenseForm({ ...nexusExpenseForm, account: v })}
+                options={NEXUS_EXPENSE_CATEGORIES.map((c) => ({ label: c, value: c }))}
+                className="h-10"
+              />
+            </Field>
+          </div>
+
+          <div className="grid items-end gap-3 sm:grid-cols-3">
+            <Field label="Amount ($ USD)">
+              <Input
+                type="number"
+                value={nexusExpenseForm.amount}
+                onChange={(v) => setNexusExpenseForm({ ...nexusExpenseForm, amount: v })}
+                placeholder="0.00"
+                className="h-10"
+              />
+            </Field>
+            <Field label="Branch">
+              <Select
+                value={nexusExpenseForm.branch || activeScopedBranchName}
+                onChange={(v) => setNexusExpenseForm({ ...nexusExpenseForm, branch: v })}
+                options={(branches.length > 0
+                  ? branches.map((b) => b.name)
+                  : [activeScopedBranchName]
+                ).map((b) => ({ label: b, value: b }))}
+                className="h-10"
+              />
+            </Field>
+            <Field label="Payment Method">
+              <Select
+                value={nexusExpenseForm.paymentMethod}
+                onChange={(v) => setNexusExpenseForm({ ...nexusExpenseForm, paymentMethod: v })}
+                options={[
+                  { label: "Cash", value: "Cash" },
+                  { label: "Card", value: "Card" },
+                  { label: "Bank Transfer", value: "Bank Transfer" },
+                  { label: "Whish / OMT", value: "Whish / OMT" },
+                ]}
+                className="h-10"
+              />
+            </Field>
+          </div>
+
+          <Field label="Expense Description / Note">
+            <Input
+              value={nexusExpenseForm.note}
+              onChange={(v) => setNexusExpenseForm({ ...nexusExpenseForm, note: v })}
+              placeholder="e.g. Physio taping supplies, gym cable replacement, court net..."
+              className="h-10"
+            />
+          </Field>
+
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <Button variant="ghost" onClick={() => setNexusExpenseOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => void handleSaveNexusModuleExpense()}>Post Expense</Button>
           </div>
         </div>
       </Modal>

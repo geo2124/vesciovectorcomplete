@@ -1,6 +1,7 @@
 import type { Coach, SessionItem } from "./mock-data";
 import { coachMatchesBranch, getCoachBranches, type DB, type LedgerEntry } from "./data-store";
 import { money } from "@/components/kit";
+import { normalizeDoubleEntryLedger } from "./accounting-coa";
 
 export interface VerifiedSessionRecord {
   id: string;
@@ -619,7 +620,7 @@ export function createCoachPayrollDebitEntry(params: {
     ? `Custom / Advance Payment (On Account) for ${periodLabel}. Unpaid verified sessions: ${money(unpaidVerified)}. Advance recorded: ${money(advancePortion)}.${advanceReason ? ` Reason: ${advanceReason}.` : ""}${linkedAdvanceSessionsCount ? ` Validated against ${linkedAdvanceSessionsCount} session(s).` : ""} Method: ${paymentMethod || "Bank Transfer"}.`
     : `Attendance-verified coach payroll for ${periodLabel}. Verified completed sessions: ${coach.verifiedCompletedSessionsCount} (${rateLabel}). Method: ${paymentMethod || "Bank Transfer"}.`;
 
-  return {
+  return normalizeDoubleEntryLedger({
     id: entryId,
     date: today,
     account: "Coach Payroll Expense",
@@ -633,6 +634,8 @@ export function createCoachPayrollDebitEntry(params: {
     referenceId: detReferenceId,
     note: note ? `${defaultNote} (${note})` : defaultNote,
     branch: coach.branch || "HQ",
+    module: "academy",
+    paymentMethod: paymentMethod || "Bank Transfer",
     ...(isAdvancePayout
       ? {
           isAdvance: true,
@@ -644,6 +647,6 @@ export function createCoachPayrollDebitEntry(params: {
             : {}),
         }
       : {}),
-  };
+  });
 }
 export const calculateCoachPayroll = calculateAttendanceVerifiedPayroll;

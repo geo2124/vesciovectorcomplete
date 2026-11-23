@@ -1,6 +1,7 @@
 import type { SessionItem } from "./mock-data";
 import type { LedgerEntry } from "./data-store";
 import { money } from "@/components/kit";
+import { normalizeDoubleEntryLedger } from "./accounting-coa";
 
 export function getGameOfficialFeeEntries(session: SessionItem): LedgerEntry[] {
   const sessionId = String(session?.id || "");
@@ -30,20 +31,23 @@ export function getGameOfficialFeeEntries(session: SessionItem): LedgerEntry[] {
       const roleName = typeof ref.role === "string" && ref.role ? ref.role : "Referee";
       const sourceLabel = ref.source === "outsource" ? "Outsourced" : "Personnel";
 
-      newEntries.push({
-        id: `match-fee-ref-${sessionId}-${String(ref.id || index)}`,
-        date: sessionDate,
-        account: "Referee & Official Fees",
-        category: "Officials & Game Staff",
-        entry: `Referee: ${roleName} — ${officialName} (${sourceLabel}) · ${matchTitle}`,
-        description: `Official compensation for ${matchTitle}`,
-        type: "Expense",
-        amount: -Math.abs(fee),
-        status: "Paid",
-        branch: sessionBranch,
-        referenceId: sessionId,
-        note: `Assigned referee (${roleName}) fee: ${money(fee)}`,
-      });
+      newEntries.push(
+        normalizeDoubleEntryLedger({
+          id: `match-fee-ref-${sessionId}-${String(ref.id || index)}`,
+          date: sessionDate,
+          account: "Referee & Official Fees",
+          category: "Officials & Game Staff",
+          entry: `Referee: ${roleName} — ${officialName} (${sourceLabel}) · ${matchTitle}`,
+          description: `Official compensation for ${matchTitle}`,
+          type: "Expense",
+          amount: -Math.abs(fee),
+          status: "Paid",
+          branch: sessionBranch,
+          referenceId: sessionId,
+          module: "academy",
+          note: `Assigned referee (${roleName}) fee: ${money(fee)}`,
+        }),
+      );
     }
   });
 
@@ -59,20 +63,23 @@ export function getGameOfficialFeeEntries(session: SessionItem): LedgerEntry[] {
       const roleName = typeof st.role === "string" && st.role ? st.role : "Staff";
       const sourceLabel = st.source === "outsource" ? "Outsourced" : "Personnel";
 
-      newEntries.push({
-        id: `match-fee-staff-${sessionId}-${String(st.id || index)}`,
-        date: sessionDate,
-        account: "Referee & Official Fees",
-        category: "Officials & Game Staff",
-        entry: `Game Staff: ${roleName} — ${staffName} (${sourceLabel}) · ${matchTitle}`,
-        description: `Staff compensation for ${matchTitle}`,
-        type: "Expense",
-        amount: -Math.abs(fee),
-        status: "Paid",
-        branch: sessionBranch,
-        referenceId: sessionId,
-        note: `Assigned match staff (${roleName}) fee: ${money(fee)}`,
-      });
+      newEntries.push(
+        normalizeDoubleEntryLedger({
+          id: `match-fee-staff-${sessionId}-${String(st.id || index)}`,
+          date: sessionDate,
+          account: "Referee & Official Fees",
+          category: "Officials & Game Staff",
+          entry: `Game Staff: ${roleName} — ${staffName} (${sourceLabel}) · ${matchTitle}`,
+          description: `Staff compensation for ${matchTitle}`,
+          type: "Expense",
+          amount: -Math.abs(fee),
+          status: "Paid",
+          branch: sessionBranch,
+          referenceId: sessionId,
+          module: "academy",
+          note: `Assigned match staff (${roleName}) fee: ${money(fee)}`,
+        }),
+      );
     }
   });
 

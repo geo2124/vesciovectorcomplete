@@ -12,6 +12,7 @@ import {
   type CrmStage,
 } from "@/lib/data-store";
 import { useAuth } from "@/lib/auth";
+import { normalizeDoubleEntryLedger } from "@/lib/accounting-coa";
 import { openDirectWhatsApp } from "@/lib/whatsapp";
 import { toast } from "sonner";
 import {
@@ -166,6 +167,7 @@ function createEmptyLeadDraft(defaultBranch = "HQ"): CrmLead {
     trialRating: "4",
     offeredPackageId: "",
     offeredMonthlyFee: 85,
+    registrationFeeCollected: 0,
     offerSentDate: todayIso,
     churnReason: "",
     lastTeam: "",
@@ -430,15 +432,46 @@ function CrmPipelinePage() {
     }
 
     const nowIso = new Date().toISOString();
+    const todayIso = nowIso.slice(0, 10);
+    const regFeeAmount = Math.max(0, Number(editingLead.registrationFeeCollected) || 0);
+    const regFeeLedgerId =
+      regFeeAmount > 0
+        ? editingLead.registrationFeeLedgerId || `l-crm-fee-${editingLead.id}`
+        : editingLead.registrationFeeLedgerId;
+
     const cleanedLead: CrmLead = {
       ...editingLead,
       playerName: editingLead.playerName.trim(),
       parentName: (editingLead.parentName || "").trim(),
       parentPhone: (editingLead.parentPhone || "").trim(),
+      ...(regFeeAmount > 0 ? { registrationFeeCollected: regFeeAmount } : {}),
+      ...(regFeeLedgerId ? { registrationFeeLedgerId: regFeeLedgerId } : {}),
       updatedAt: nowIso,
     };
 
     await setEntity("crmLeads", cleanedLead);
+
+    if (regFeeAmount > 0 && regFeeLedgerId) {
+      await setEntity(
+        "ledger",
+        normalizeDoubleEntryLedger({
+          id: regFeeLedgerId,
+          date: todayIso,
+          account: "Player Insurance & Registration",
+          category: "Player Insurance & Registration",
+          entry: `CRM Registration / Trial Fee · ${cleanedLead.playerName}`,
+          description: `CRM Registration / Trial Fee · ${cleanedLead.playerName}`,
+          type: "Revenue",
+          amount: regFeeAmount,
+          status: "Collected",
+          paymentMethod: "Cash",
+          branch: cleanedLead.preferredBranch || "HQ",
+          module: "crm",
+          referenceId: cleanedLead.id,
+          note: `Collected via CRM pipeline (${cleanedLead.stage})`,
+        }),
+      );
+    }
 
     // If stage was set to active_converted, automatically create or activate the player in Academy DB
     if (cleanedLead.stage === "active_converted") {
@@ -2043,6 +2076,21 @@ function CrmPipelinePage() {
                           offeredMonthlyFee: Number(e.target.value) || 0,
                         })
                       }
+                      className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 font-mono text-xs leading-tight"
+                    />
+                  </Field>
+                  <Field label="Registration / Trial Fee Collected ($)">
+                    <input
+                      type="number"
+                      min={0}
+                      value={editingLead.registrationFeeCollected ?? 0}
+                      onChange={(e) =>
+                        setEditingLead({
+                          ...editingLead,
+                          registrationFeeCollected: Math.max(0, Number(e.target.value) || 0),
+                        })
+                      }
+                      placeholder="0 (optional)"
                       className="h-10 w-full rounded-xl border border-border bg-background px-3 py-2 font-mono text-xs leading-tight"
                     />
                   </Field>

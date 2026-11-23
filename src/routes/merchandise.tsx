@@ -40,6 +40,7 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
+import { normalizeDoubleEntryLedger } from "@/lib/accounting-coa";
 
 export const Route = createFileRoute("/merchandise")({
   head: () => ({
@@ -695,10 +696,39 @@ function MerchandisePage() {
       price: finalSellingPrice,
       costPrice: finalCostPrice,
     };
+    const initialStockCost =
+      !editItem && finalStock > 0 && finalCostPrice > 0
+        ? Math.round(finalStock * finalCostPrice * 100) / 100
+        : 0;
+    const newStockId = editItem ? editItem.id : `m-${Date.now().toString(36)}`;
     update((d) =>
       editItem
         ? { ...d, stock: d.stock.map((s) => (s.id === editItem.id ? { ...s, ...itemData } : s)) }
-        : { ...d, stock: [{ ...itemData, id: `m-${Date.now().toString(36)}` }, ...d.stock] },
+        : {
+            ...d,
+            stock: [{ ...itemData, id: newStockId }, ...d.stock],
+            ...(initialStockCost > 0
+              ? {
+                  ledger: [
+                    normalizeDoubleEntryLedger({
+                      id: `l-stock-${Date.now().toString(36)}`,
+                      date: new Date().toISOString().slice(0, 10),
+                      account: "Merchandise Store COGS",
+                      category: "Merchandise Store COGS",
+                      entry: `${itemData.item} initial stock purchase · ${finalStock} pcs`,
+                      type: "Expense" as const,
+                      amount: initialStockCost,
+                      status: "Paid" as const,
+                      branch: itemData.branch || userBranch || db.branches[0]?.name || "",
+                      module: "merchandise",
+                      referenceId: newStockId,
+                      note: `Initial stock purchase: ${finalStock} units @ ${money(finalCostPrice)}`,
+                    }),
+                    ...d.ledger,
+                  ],
+                }
+              : {}),
+          },
     );
     if (itemData.stock <= (itemData.reorder ?? 10)) {
       void dispatchLowStockAlert(tenantId, {
@@ -887,13 +917,14 @@ function MerchandisePage() {
             if (l.account === "Merchandise Revenue") {
               hasRevEntry = true;
               if (newPaid <= 0) return null;
-              return {
+              return normalizeDoubleEntryLedger({
                 ...l,
                 entry: `Merchandise Sale · ${orderForm.player.trim()} · ${formattedItemsLabel}${variantSuffix}${printingSuffix}`,
                 amount: Math.abs(newPaid),
                 branch: branchName || l.branch || "",
+                module: "merchandise",
                 note: breakdownNote,
-              };
+              });
             }
             if (l.account === "Accounts Receivable - Merchandise") {
               hasArEntry = true;
@@ -904,58 +935,69 @@ function MerchandisePage() {
                   status: "Collected" as const,
                 };
               }
-              return {
+              return normalizeDoubleEntryLedger({
                 ...l,
                 entry: `Accounts Receivable - Merchandise · ${orderForm.player.trim()} · ${formattedItemsLabel}${variantSuffix}${printingSuffix}`,
                 amount: Math.abs(newUnpaid),
                 status: "Pending" as const,
                 branch: branchName || l.branch || "",
+                module: "merchandise",
                 note: `Assigned on credit to ${orderForm.player.trim()}. ${breakdownNote}`,
-              };
+              });
             }
-            if (l.account === "Merchandise" && l.type === "Expense") {
-              return {
+            if (
+              (l.account === "Merchandise" || l.account === "Merchandise Store COGS") &&
+              l.type === "Expense"
+            ) {
+              return normalizeDoubleEntryLedger({
                 ...l,
                 entry: `Merchandise Cost (COGS) · ${formattedItemsLabel}${variantSuffix}`,
                 amount: Math.abs(newQty * effectiveCost),
-              };
+                module: "merchandise",
+              });
             }
             return l;
           })
           .filter((l): l is NonNullable<typeof l> => l !== null && l.amount > 0);
 
         if (!hasRevEntry && newPaid > 0) {
-          reconciledLedger.unshift({
-            id: `l-merch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-            date: dateStr,
-            account: "Merchandise Revenue",
-            category: "Merchandise Revenue",
-            entry: `Merchandise Sale · ${orderForm.player.trim()} · ${formattedItemsLabel}${variantSuffix}${printingSuffix}`,
-            type: "Revenue",
-            amount: Math.abs(newPaid),
-            status: "Collected",
-            referenceId: editOrder.id,
-            orderId: editOrder.id,
-            branch: branchName,
-            note: breakdownNote,
-          });
+          reconciledLedger.unshift(
+            normalizeDoubleEntryLedger({
+              id: `l-merch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+              date: dateStr,
+              account: "Merchandise Revenue",
+              category: "Merchandise Revenue",
+              entry: `Merchandise Sale · ${orderForm.player.trim()} · ${formattedItemsLabel}${variantSuffix}${printingSuffix}`,
+              type: "Revenue",
+              amount: Math.abs(newPaid),
+              status: "Collected",
+              referenceId: editOrder.id,
+              orderId: editOrder.id,
+              branch: branchName,
+              module: "merchandise",
+              note: breakdownNote,
+            }),
+          );
         }
 
         if (!hasArEntry && newUnpaid > 0) {
-          reconciledLedger.unshift({
-            id: `l-ar-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-            date: dateStr,
-            account: "Accounts Receivable - Merchandise",
-            category: "Accounts Receivable - Merchandise",
-            entry: `Accounts Receivable - Merchandise · ${orderForm.player.trim()} · ${formattedItemsLabel}${variantSuffix}${printingSuffix}`,
-            type: "Revenue",
-            amount: Math.abs(newUnpaid),
-            status: "Pending",
-            referenceId: editOrder.id,
-            orderId: editOrder.id,
-            branch: branchName,
-            note: `Assigned on credit to ${orderForm.player.trim()}. ${breakdownNote}`,
-          });
+          reconciledLedger.unshift(
+            normalizeDoubleEntryLedger({
+              id: `l-ar-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+              date: dateStr,
+              account: "Accounts Receivable - Merchandise",
+              category: "Accounts Receivable - Merchandise",
+              entry: `Accounts Receivable - Merchandise · ${orderForm.player.trim()} · ${formattedItemsLabel}${variantSuffix}${printingSuffix}`,
+              type: "Revenue",
+              amount: Math.abs(newUnpaid),
+              status: "Pending",
+              referenceId: editOrder.id,
+              orderId: editOrder.id,
+              branch: branchName,
+              module: "merchandise",
+              note: `Assigned on credit to ${orderForm.player.trim()}. ${breakdownNote}`,
+            }),
+          );
         }
 
         return {
@@ -1129,28 +1171,33 @@ function MerchandisePage() {
         }
         return { ...x, stock: x.stock + qty };
       }),
-      ledger: [
-        {
-          id: `l-${Date.now().toString(36)}`,
-          date: new Date().toISOString().slice(0, 10),
-          account: "Merchandise",
-          category: "Merchandise",
-          entry: `${restockItem.item} restock · ${qty} pcs`,
-          type: "Expense" as const,
-          amount: qty * effectiveCost,
-          status: "Paid" as const,
-          branch: restockItem.branch || userBranch || db.branches[0]?.name || "",
-          note: `Purchased ${qty} units @ ${money(effectiveCost)}${
-            restockVariants.length > 0
-              ? ` (${restockVariants
-                  .filter((v) => Number(v.quantity) > 0)
-                  .map((v) => `${v.color} · ${v.size}: +${v.quantity}`)
-                  .join(", ")})`
-              : ""
-          }`,
-        },
-        ...d.ledger,
-      ],
+      ledger:
+        qty * effectiveCost > 0
+          ? [
+              normalizeDoubleEntryLedger({
+                id: `l-${Date.now().toString(36)}`,
+                date: new Date().toISOString().slice(0, 10),
+                account: "Merchandise Store COGS",
+                category: "Merchandise Store COGS",
+                entry: `${restockItem.item} restock · ${qty} pcs`,
+                type: "Expense" as const,
+                amount: qty * effectiveCost,
+                status: "Paid" as const,
+                branch: restockItem.branch || userBranch || db.branches[0]?.name || "",
+                module: "merchandise",
+                referenceId: restockItem.id,
+                note: `Purchased ${qty} units @ ${money(effectiveCost)}${
+                  restockVariants.length > 0
+                    ? ` (${restockVariants
+                        .filter((v) => Number(v.quantity) > 0)
+                        .map((v) => `${v.color} · ${v.size}: +${v.quantity}`)
+                        .join(", ")})`
+                    : ""
+                }`,
+              }),
+              ...d.ledger,
+            ]
+          : d.ledger,
     }));
     toast.success(`Added ${qty} units to ${restockItem.item} inventory.`);
     setRestockItem(null);

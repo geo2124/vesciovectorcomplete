@@ -12,6 +12,7 @@ import {
   type PosHeldOrder,
   type LedgerEntry,
 } from "@/lib/data-store";
+import { normalizeDoubleEntryLedger } from "@/lib/accounting-coa";
 import { useAuth } from "@/lib/auth";
 import {
   Button as Btn,
@@ -489,6 +490,8 @@ export const NexusPosModule: React.FC<NexusPosModuleProps> = ({
   const [paymentMethod, setPaymentMethod] = useState<
     "Cash" | "Card" | "Charge to Account" | "Split Payment"
   >("Cash");
+  const [tenderCurrency, setTenderCurrency] = useState<"USD" | "LBP">("USD");
+  const [lbpExchangeRate, setLbpExchangeRate] = useState<number>(89500);
   const [amountTendered, setAmountTendered] = useState<string>("");
   const [splitCash, setSplitCash] = useState<number>(0);
   const [splitCard, setSplitCard] = useState<number>(0);
@@ -764,6 +767,9 @@ export const NexusPosModule: React.FC<NexusPosModuleProps> = ({
 
     const nowTime = new Date().toTimeString().slice(0, 5);
     const receiptNo = `POS-${Date.now().toString().slice(-6)}`;
+    const activeRate = tenderCurrency === "LBP" ? Math.max(1, Number(lbpExchangeRate) || 89500) : 1;
+    const txOriginalTotal =
+      tenderCurrency === "LBP" ? Math.round(cartTotals.total * activeRate) : cartTotals.total;
 
     const tx: PosTransaction = {
       id: `pos-tx-${Date.now()}`,
@@ -782,6 +788,9 @@ export const NexusPosModule: React.FC<NexusPosModuleProps> = ({
       discount: cartTotals.discount,
       taxTotal: cartTotals.taxTotal,
       total: cartTotals.total,
+      currency: tenderCurrency,
+      originalAmount: txOriginalTotal,
+      exchangeRate: activeRate,
       paymentMethod,
       splitCashAmount: paymentMethod === "Split Payment" ? splitCash : undefined,
       splitCardAmount: paymentMethod === "Split Payment" ? splitCard : undefined,
@@ -846,21 +855,28 @@ export const NexusPosModule: React.FC<NexusPosModuleProps> = ({
     }
 
     const collectedNow = Number((cartTotals.total - accountChargePortion).toFixed(2));
+    const collectedOriginal =
+      tenderCurrency === "LBP" ? Math.round(collectedNow * activeRate) : collectedNow;
     const ledgerEntry: LedgerEntry | undefined =
       collectedNow > 0
-        ? {
+        ? normalizeDoubleEntryLedger({
             id: `led-pos-${Date.now()}`,
             date: todayStr,
             account: "Kiosk POS & Merch Sales",
             category: "Kiosk POS",
-            entry: `[Vescio Nexus POS ${receiptNo}] ${tx.customerName} (${paymentMethod} - ${activeBranchName})`,
+            module: "pos",
+            entry: `[Vescio Nexus POS ${receiptNo}] ${tx.customerName} (${paymentMethod}${tenderCurrency === "LBP" ? ` · ${collectedOriginal.toLocaleString()} LBP @ ${activeRate}` : ""} - ${activeBranchName})`,
             memo: `[Vescio Nexus POS ${receiptNo}] ${tx.customerName}`,
             type: "Revenue",
             amount: collectedNow,
+            currency: tenderCurrency,
+            originalAmount: collectedOriginal,
+            exchangeRate: activeRate,
+            paymentMethod,
             status: "Collected",
             branch: activeBranchName,
             referenceId: tx.id,
-          }
+          })
         : undefined;
 
     if (!activeBranchObj) {
@@ -1063,19 +1079,28 @@ export const NexusPosModule: React.FC<NexusPosModuleProps> = ({
       // 4. Record reversing refund entry in Financial Ledger
       const collectedRefund = Number((tx.total - acctRefunded).toFixed(2));
       if (collectedRefund > 0) {
-        const refundLedgerEntry: LedgerEntry = {
+        const refCurrency = tx.currency || "USD";
+        const refRate = tx.exchangeRate || (refCurrency === "LBP" ? 89500 : 1);
+        const refOriginal =
+          refCurrency === "LBP" ? Math.round(collectedRefund * refRate) : collectedRefund;
+        const refundLedgerEntry: LedgerEntry = normalizeDoubleEntryLedger({
           id: `led-pos-ref-${Date.now()}`,
           date: todayStr,
           account: "Kiosk POS & Merch Sales",
           category: "Kiosk POS",
+          module: "pos",
           entry: `[Vescio Nexus POS Refund ${tx.receiptNumber}] ${tx.customerName} (${tx.paymentMethod} - ${tx.branch || activeBranchName})`,
           memo: `[Vescio Nexus POS Refund ${tx.receiptNumber}] ${tx.customerName}`,
           type: "Expense",
           amount: collectedRefund,
+          currency: refCurrency,
+          originalAmount: refOriginal,
+          exchangeRate: refRate,
+          paymentMethod: tx.paymentMethod,
           status: "Paid",
           branch: tx.branch || activeBranchName,
           referenceId: tx.id,
-        };
+        });
         await setEntity("ledger", refundLedgerEntry);
       }
 
@@ -1280,6 +1305,25 @@ export const NexusPosModule: React.FC<NexusPosModuleProps> = ({
         }),
         activeBranchObj,
       );
+
+      if ((log.totalCostImpact || 0) > 0 && invForm.adjustmentType !== "Manual Correction") {
+        const cogsEntry = normalizeDoubleEntryLedger({
+          id: `led-pos-cogs-${Date.now()}`,
+          date: todayStr,
+          account: "Kiosk POS Cost of Goods Sold (COGS)",
+          category: "Kiosk POS",
+          module: "pos",
+          entry: `[Vescio Nexus POS ${invForm.adjustmentType}] ${item.name} (${qty} units @ ${money(log.unitCost || 0)})`,
+          memo: log.reasonOrSupplier || `${invForm.adjustmentType}: ${item.name}`,
+          type: "Expense",
+          amount: log.totalCostImpact || 0,
+          status: "Paid",
+          paymentMethod: "Cash",
+          branch: activeBranchName,
+          referenceId: log.id,
+        });
+        await setEntity("ledger", cogsEntry);
+      }
 
       setInvModalOpen(false);
       toast.success(`${invForm.adjustmentType}: ${item.name} (${item.stock} → ${nextStock} units)`);
@@ -2007,6 +2051,55 @@ export const NexusPosModule: React.FC<NexusPosModuleProps> = ({
                   ))}
                 </div>
               </Field>
+
+              {/* Multi-Currency USD / LBP Tender Switcher */}
+              <div className="grid grid-cols-2 items-end gap-2.5 p-2.5 rounded-xl bg-black/30 border border-ink-800">
+                <Field label="Tender Currency">
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {(["USD", "LBP"] as const).map((curr) => (
+                      <button
+                        key={curr}
+                        type="button"
+                        onClick={() => setTenderCurrency(curr)}
+                        className={`h-9 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                          tenderCurrency === curr
+                            ? "bg-emerald-500 text-black border-emerald-400"
+                            : "bg-black/40 text-ink-300 border-ink-700 hover:text-white"
+                        }`}
+                      >
+                        {curr}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+                {tenderCurrency === "LBP" ? (
+                  <Field label="LBP Rate (1 USD =)">
+                    <Input
+                      type="number"
+                      value={lbpExchangeRate}
+                      onChange={(e) =>
+                        setLbpExchangeRate(Math.max(1, Number(e.target.value) || 89500))
+                      }
+                    />
+                  </Field>
+                ) : (
+                  <div className="h-9 flex items-center justify-end font-mono text-[11px] text-ink-400 px-2">
+                    1 USD = {lbpExchangeRate.toLocaleString()} LBP
+                  </div>
+                )}
+              </div>
+
+              {tenderCurrency === "LBP" && (
+                <div className="px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-between text-xs font-mono text-emerald-300">
+                  <span>LBP Equivalent Due:</span>
+                  <strong>
+                    {Math.round(
+                      cartTotals.total * (Number(lbpExchangeRate) || 89500),
+                    ).toLocaleString()}{" "}
+                    LBP ({money(cartTotals.total)})
+                  </strong>
+                </div>
+              )}
 
               {paymentMethod === "Cash" && (
                 <div className="grid grid-cols-2 items-end gap-2.5 p-3 rounded-xl bg-black/30 border border-ink-800">

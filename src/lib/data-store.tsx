@@ -78,6 +78,7 @@ import { getTenantSlug } from "./utils";
 import { toast } from "sonner";
 import { calculatePlayerMonthlyFee } from "./payments";
 import { money } from "@/components/kit";
+import { normalizeDoubleEntryLedger } from "./accounting-coa";
 import { DEFAULT_WHATSAPP_TEMPLATES, type WhatsAppTemplate } from "./whatsapp";
 import {
   academy as seedAcademy,
@@ -4502,7 +4503,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
           ? (capBranchSubArrays(
               rawItem as unknown as Record<string, unknown>,
             ) as unknown as DB[K][number])
-          : rawItem;
+          : collectionName === "ledger"
+            ? (normalizeDoubleEntryLedger(
+                rawItem as unknown as LedgerEntry,
+              ) as unknown as DB[K][number])
+            : rawItem;
       // Capture previous slice snapshot before optimistic update
       const previousSlice = (dbStore.getSlice(collectionName) as Array<{ id: string }>) || [];
       const prevItem = previousSlice.find((x) => x.id === (item as { id: string }).id) as
@@ -5101,54 +5106,63 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // 3. Ledger Entries
       const newLedgerEntries: LedgerEntry[] = [];
       if (paid > 0) {
-        newLedgerEntries.push({
-          id: `l-merch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-          date: dateStr,
-          account: "Merchandise Revenue",
-          category: "Merchandise Revenue",
-          entry: `Merchandise Sale · ${params.playerName} · ${params.itemName}${variantSuffix}${qty > 1 ? ` (x${qty})` : ""}${printingEntrySuffix}${params.discountPercent ? ` (${params.discountPercent}% off)` : ""}`,
-          type: "Revenue",
-          amount: paid,
-          status: "Collected",
-          referenceId: orderId,
-          orderId,
-          branch: params.branch || "",
-          note: breakdownNote,
-        });
+        newLedgerEntries.push(
+          normalizeDoubleEntryLedger({
+            id: `l-merch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+            date: dateStr,
+            account: "Merchandise Revenue",
+            category: "Merchandise Revenue",
+            entry: `Merchandise Sale · ${params.playerName} · ${params.itemName}${variantSuffix}${qty > 1 ? ` (x${qty})` : ""}${printingEntrySuffix}${params.discountPercent ? ` (${params.discountPercent}% off)` : ""}`,
+            type: "Revenue",
+            amount: paid,
+            status: "Collected",
+            referenceId: orderId,
+            orderId,
+            branch: params.branch || "",
+            module: "merchandise",
+            note: breakdownNote,
+          }),
+        );
       }
 
       if (unpaid > 0) {
-        newLedgerEntries.push({
-          id: `l-ar-${orderId}`,
-          date: dateStr,
-          account: "Accounts Receivable - Merchandise",
-          category: "Accounts Receivable - Merchandise",
-          entry: `Accounts Receivable - Merchandise · ${params.playerName} · ${params.itemName}${variantSuffix}${qty > 1 ? ` (x${qty})` : ""}${printingEntrySuffix}${params.discountPercent ? ` (${params.discountPercent}% off)` : ""}`,
-          type: "Revenue",
-          amount: unpaid,
-          status: "Pending",
-          referenceId: orderId,
-          orderId,
-          branch: params.branch || "",
-          note: `Assigned on credit to ${params.playerName}. ${breakdownNote}`,
-        });
+        newLedgerEntries.push(
+          normalizeDoubleEntryLedger({
+            id: `l-ar-${orderId}`,
+            date: dateStr,
+            account: "Accounts Receivable - Merchandise",
+            category: "Accounts Receivable - Merchandise",
+            entry: `Accounts Receivable - Merchandise · ${params.playerName} · ${params.itemName}${variantSuffix}${qty > 1 ? ` (x${qty})` : ""}${printingEntrySuffix}${params.discountPercent ? ` (${params.discountPercent}% off)` : ""}`,
+            type: "Revenue",
+            amount: unpaid,
+            status: "Pending",
+            referenceId: orderId,
+            orderId,
+            branch: params.branch || "",
+            module: "merchandise",
+            note: `Assigned on credit to ${params.playerName}. ${breakdownNote}`,
+          }),
+        );
       }
 
       if (totalCost > 0) {
-        newLedgerEntries.push({
-          id: `l-cogs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-          date: dateStr,
-          account: "Merchandise",
-          category: "Merchandise",
-          entry: `Merchandise Cost (COGS) · ${params.itemName}${variantSuffix}${qty > 1 ? ` (x${qty})` : ""}`,
-          type: "Expense",
-          amount: totalCost,
-          status: "Collected",
-          referenceId: orderId,
-          orderId,
-          branch: params.branch || "",
-          note: `Cost of goods sold (${qty} unit(s) @ ${db.academy?.currency || "USD"} ${effectiveCostPrice}) for Order #${orderId}`,
-        });
+        newLedgerEntries.push(
+          normalizeDoubleEntryLedger({
+            id: `l-cogs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+            date: dateStr,
+            account: "Merchandise",
+            category: "Merchandise",
+            entry: `Merchandise Cost (COGS) · ${params.itemName}${variantSuffix}${qty > 1 ? ` (x${qty})` : ""}`,
+            type: "Expense",
+            amount: totalCost,
+            status: "Collected",
+            referenceId: orderId,
+            orderId,
+            branch: params.branch || "",
+            module: "merchandise",
+            note: `Cost of goods sold (${qty} unit(s) @ ${db.academy?.currency || "USD"} ${effectiveCostPrice}) for Order #${orderId}`,
+          }),
+        );
       }
 
       // Capture previous slice snapshots before optimistic update
@@ -5283,7 +5297,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       }
 
       // Settle Ledger Entry
-      const newLedgerEntry: LedgerEntry = {
+      const newLedgerEntry: LedgerEntry = normalizeDoubleEntryLedger({
         id: `l-merch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
         date: dateStr,
         account: "Merchandise Revenue",
@@ -5293,8 +5307,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
         amount: unsettled,
         status: "Collected",
         referenceId: order.id,
+        branch: order.branch || playerObj?.branch || "",
+        module: "merchandise",
         note: `Order #${order.id} balance settled by ${order.player}`,
-      };
+      });
 
       // Capture previous slice snapshots
       const prevOrders = (dbStore.getSlice("orders") as Order[]) || db.orders;
@@ -5719,7 +5735,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const player = db.players.find((p) => p.id === invoice.playerId);
       const newBalance = player ? Math.max(0, (player.balance || 0) - invoice.amount) : 0;
 
-      const ledgerEntry: LedgerEntry = {
+      const ledgerEntry: LedgerEntry = normalizeDoubleEntryLedger({
         id: `l-tui-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
         date: today,
         account: "Tuition",
@@ -5728,10 +5744,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
         type: "Revenue",
         amount: invoice.amount,
         status: "Collected",
+        paymentMethod,
         branch: invoice.playerBranch || player?.branch || "",
         referenceId: invoice.id,
+        module: "academy",
         note: `Invoice ${invoice.invoiceNumber} paid via ${paymentMethod}`,
-      };
+      });
 
       // Optimistic slice updates
       const updatedInvoices = prevInvoices.map((i) => (i.id === invoiceId ? updatedInvoice : i));
@@ -5938,30 +5956,33 @@ export function DataProvider({ children }: { children: ReactNode }) {
         .join(", ");
 
       const settledSet = new Set(settledInvoiceIds);
-      const ledgerEntry: LedgerEntry = cleanFirestoreData({
-        id: `l-fam-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-        date: today,
-        account: "Tuition",
-        category: "Tuition",
-        entry: `Unified Family Payment · ${guardianLabel} (${familyPlayers.map((p) => p.name).join(", ")})`,
-        type: "Revenue",
-        amount,
-        status: "Collected",
-        paymentMethod,
-        branch: primaryBranch,
-        playerId: familyPlayers[0].id,
-        familyPlayerIds: familyPlayers.map((p) => p.id),
-        familyPaymentAllocations: playerAllocations,
-        familySettledInvoiceIds: settledInvoiceIds,
-        ...(settledInvoiceIds[0] ? { referenceId: settledInvoiceIds[0] } : {}),
-        note: [
-          `Unified Family Receipt (${paymentMethod})`,
-          itemizedBreakdown ? `Breakdown: ${itemizedBreakdown}` : "",
-          notes.trim(),
-        ]
-          .filter(Boolean)
-          .join(" · "),
-      });
+      const ledgerEntry: LedgerEntry = cleanFirestoreData(
+        normalizeDoubleEntryLedger({
+          id: `l-fam-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+          date: today,
+          account: "Tuition",
+          category: "Tuition",
+          entry: `Unified Family Payment · ${guardianLabel} (${familyPlayers.map((p) => p.name).join(", ")})`,
+          type: "Revenue",
+          amount,
+          status: "Collected",
+          paymentMethod,
+          branch: primaryBranch,
+          module: "academy",
+          playerId: familyPlayers[0].id,
+          familyPlayerIds: familyPlayers.map((p) => p.id),
+          familyPaymentAllocations: playerAllocations,
+          familySettledInvoiceIds: settledInvoiceIds,
+          ...(settledInvoiceIds[0] ? { referenceId: settledInvoiceIds[0] } : {}),
+          note: [
+            `Unified Family Receipt (${paymentMethod})`,
+            itemizedBreakdown ? `Breakdown: ${itemizedBreakdown}` : "",
+            notes.trim(),
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        }),
+      );
 
       // Update open invoices & sibling balances in local state and Firestore
       for (const invId of settledInvoiceIds) {

@@ -4,6 +4,7 @@ import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { AppShell } from "@/components/app-shell";
+import { normalizeDoubleEntryLedger } from "@/lib/accounting-coa";
 import {
   Button,
   Chip,
@@ -746,7 +747,7 @@ function PlayersPage() {
     if (isInsured && insFee > 0) {
       if (insurancePaymentHandling === "collect_now" && !insPaid) {
         const ledgerId = `l-ins-${playerId}-${Date.now().toString(36)}`;
-        newInsuranceLedgerEntry = {
+        newInsuranceLedgerEntry = normalizeDoubleEntryLedger({
           id: ledgerId,
           date: new Date().toISOString().slice(0, 10),
           account: "Player Insurance",
@@ -758,12 +759,13 @@ function PlayersPage() {
           amount: insFee,
           paymentMethod: "Cash",
           branch: finalBranch,
+          module: "academy",
           playerId,
           referenceId: playerId,
           insuranceCompanyId: insCompanyId,
           insuranceCompanyName: insCompanyName,
           note: `Insurance policy (${insCompanyName}) collected for ${data.name}`,
-        };
+        });
         insPaid = true;
         insLedgerId = ledgerId;
         if (insBilledToBalance) {
@@ -983,7 +985,7 @@ function PlayersPage() {
           : inv,
       ),
       ledger: [
-        {
+        normalizeDoubleEntryLedger({
           id: `l-${Date.now().toString(36)}`,
           date: todayIso,
           account: "Monthly fees",
@@ -993,10 +995,11 @@ function PlayersPage() {
           status: "Collected" as const,
           paymentMethod: "Cash",
           branch: payFor.branch || "",
+          module: "academy",
           note: paymentNote,
           playerId: payFor.id,
           ...(invoicesToSettle[0]?.id ? { referenceId: invoicesToSettle[0].id } : {}),
-        },
+        }),
         ...d.ledger,
       ],
     }));

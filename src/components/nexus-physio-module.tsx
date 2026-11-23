@@ -14,6 +14,7 @@ import {
   type PlayerMedicalClearanceStatus,
   type LedgerEntry,
 } from "@/lib/data-store";
+import { normalizeDoubleEntryLedger } from "@/lib/accounting-coa";
 import { useAuth } from "@/lib/auth";
 import {
   Button as Btn,
@@ -647,18 +648,20 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
 
       // If new patient purchased a Rehab Package at intake, post revenue to Ledger
       if (!existing && selectedPkg && selectedPkg.price > 0) {
-        const ledgerEntry: LedgerEntry = {
+        const ledgerEntry: LedgerEntry = normalizeDoubleEntryLedger({
           id: `led-physio-pkg-${Date.now()}`,
           date: todayStr,
           account: "Physiotherapy & Medical Revenue",
           category: "Physiotherapy",
+          module: "physio",
           entry: `[Vescio Nexus Physio Package] ${record.patientName} — ${selectedPkg.name} (${record.branch})`,
           memo: `[Vescio Nexus Physio Package] ${record.patientName} — ${selectedPkg.name}`,
           type: "Revenue",
           amount: selectedPkg.price,
           status: "Collected",
           branch: record.branch,
-        };
+          referenceId: record.id,
+        });
         await setEntity("ledger", ledgerEntry);
       }
 
@@ -1326,20 +1329,40 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
         );
 
         if (isPaidCashOrCard && updatedAppt.fee > 0) {
-          const ledgerEntry: LedgerEntry = {
+          const ledgerEntry: LedgerEntry = normalizeDoubleEntryLedger({
             id: `led-physio-sess-${Date.now()}`,
             date: updatedAppt.date,
             account: "Physiotherapy & Medical Revenue",
             category: "Physiotherapy",
+            module: "physio",
             entry: `[Vescio Nexus Physio] ${updatedAppt.patientName} — ${updatedAppt.appointmentType} (${updatedAppt.practitionerName})`,
             memo: `[Vescio Nexus Physio] ${updatedAppt.patientName} — ${updatedAppt.appointmentType}`,
             type: "Revenue",
             amount: updatedAppt.fee,
             status: "Collected",
             branch: updatedAppt.branch || updatedPatient.branch || activeBranchName,
-          };
+            referenceId: updatedAppt.id,
+          });
           await setEntity("ledger", ledgerEntry);
         }
+      }
+
+      if (payout > 0) {
+        const commissionEntry: LedgerEntry = normalizeDoubleEntryLedger({
+          id: `led-physio-comm-${Date.now()}`,
+          date: updatedAppt.date,
+          account: "Physiotherapy Practitioner Commissions",
+          category: "Physiotherapy",
+          module: "physio",
+          entry: `[Vescio Nexus Physio Commission] ${updatedAppt.practitionerName} — Session for ${updatedAppt.patientName}`,
+          memo: `[Vescio Nexus Physio Commission] ${updatedAppt.practitionerName} (${updatedAppt.appointmentType})`,
+          type: "Expense",
+          amount: payout,
+          status: "Paid",
+          branch: updatedAppt.branch || pat?.branch || activeBranchName,
+          referenceId: updatedAppt.id,
+        });
+        await setEntity("ledger", commissionEntry);
       }
 
       setCompletingAppt(null);
@@ -1381,18 +1404,23 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
       await setEntity("physioRecords", updated);
 
       if (assignPkgPaidNow && pkg.price > 0) {
-        await setEntity("ledger", {
-          id: `led-physio-pack-${Date.now()}`,
-          date: todayStr,
-          account: "Physiotherapy & Medical Revenue",
-          category: "Physiotherapy",
-          entry: `[Vescio Nexus Rehab Package] ${assignPkgPatient.patientName} purchased ${pkg.name} (+${pkg.sessionsIncluded} sessions)`,
-          memo: `[Vescio Nexus Rehab Package] ${assignPkgPatient.patientName} — ${pkg.name}`,
-          type: "Revenue",
-          amount: pkg.price,
-          status: "Collected",
-          branch: assignPkgPatient.branch || activeBranchName,
-        });
+        await setEntity(
+          "ledger",
+          normalizeDoubleEntryLedger({
+            id: `led-physio-pack-${Date.now()}`,
+            date: todayStr,
+            account: "Physiotherapy & Medical Revenue",
+            category: "Physiotherapy",
+            module: "physio",
+            entry: `[Vescio Nexus Rehab Package] ${assignPkgPatient.patientName} purchased ${pkg.name} (+${pkg.sessionsIncluded} sessions)`,
+            memo: `[Vescio Nexus Rehab Package] ${assignPkgPatient.patientName} — ${pkg.name}`,
+            type: "Revenue",
+            amount: pkg.price,
+            status: "Collected",
+            branch: assignPkgPatient.branch || activeBranchName,
+            referenceId: assignPkgPatient.id,
+          }),
+        );
       }
 
       setAssignPkgPatient(null);
@@ -1401,6 +1429,42 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
       );
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to assign package.");
+    }
+  };
+
+  const handleCollectPatientBalanceDue = async (patient: PhysioRecord) => {
+    const due = Number(patient.balanceDue) || 0;
+    if (due <= 0) return;
+    try {
+      const updated: PhysioRecord = {
+        ...patient,
+        totalPaid: (patient.totalPaid || 0) + due,
+        balanceDue: 0,
+        updatedAt: new Date().toISOString(),
+      };
+      await setEntity("physioRecords", updated);
+      await setEntity(
+        "ledger",
+        normalizeDoubleEntryLedger({
+          id: `led-physio-settle-${Date.now()}`,
+          date: todayStr,
+          account: "Physiotherapy & Medical Revenue",
+          category: "Physiotherapy",
+          module: "physio",
+          entry: `[Vescio Nexus Physio Balance Collected] ${patient.patientName} (${patient.branch})`,
+          memo: `[Vescio Nexus Physio Balance Collected] ${patient.patientName}`,
+          type: "Revenue",
+          amount: due,
+          status: "Collected",
+          branch: patient.branch || activeBranchName,
+          referenceId: patient.id,
+        }),
+      );
+      toast.success(
+        `Collected ${money(due)} balance due for ${patient.patientName} to the Financial Ledger`,
+      );
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to collect balance due.");
     }
   };
 
@@ -2284,6 +2348,16 @@ export const NexusPhysioModule: React.FC<NexusPhysioModuleProps> = ({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-1.5">
+                    {(activePatientFile.balanceDue || 0) > 0 && (
+                      <Btn
+                        variant="primary"
+                        size="sm"
+                        onClick={() => handleCollectPatientBalanceDue(activePatientFile)}
+                      >
+                        <DollarSign className="w-3.5 h-3.5" /> Collect Balance Due (
+                        {money(activePatientFile.balanceDue || 0)})
+                      </Btn>
+                    )}
                     <Btn
                       variant="secondary"
                       size="sm"

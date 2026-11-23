@@ -16,6 +16,7 @@ import {
   type BranchOffDay,
   type LedgerEntry,
 } from "@/lib/data-store";
+import { normalizeDoubleEntryLedger } from "@/lib/accounting-coa";
 import { useAuth } from "@/lib/auth";
 import {
   Button as Btn,
@@ -735,18 +736,20 @@ export const NexusGymModule: React.FC<NexusGymModuleProps> = ({
       await setEntity("gymMembers", memberRecord);
 
       if (!existingMember && clientForm.paidNow && fee > 0) {
-        const ledgerEntry: LedgerEntry = {
+        const ledgerEntry: LedgerEntry = normalizeDoubleEntryLedger({
           id: `led-gym-${Date.now()}`,
           date: todayStr,
           account: "Gym & S&C Membership Revenue",
           category: "Gym & Strength",
+          module: "gym",
           entry: `[Vescio Nexus Gym] ${memberRecord.memberName} (${memberRecord.packageName} - ${memberRecord.branch})`,
           memo: `[Vescio Nexus Gym] ${memberRecord.memberName} (${memberRecord.packageName} - ${memberRecord.branch})`,
           type: "Revenue",
           amount: fee,
           status: "Collected",
           branch: memberRecord.branch,
-        };
+          referenceId: memberRecord.id,
+        });
         await setEntity("ledger", ledgerEntry);
       }
 
@@ -805,22 +808,62 @@ export const NexusGymModule: React.FC<NexusGymModuleProps> = ({
       await setEntity("gymMembers", updated);
 
       if (renewPaidNow && pkg.price > 0) {
-        await setEntity("ledger", {
-          id: `led-gym-renew-${Date.now()}`,
-          date: todayStr,
-          account: "Gym & S&C Membership Revenue",
-          category: "Gym & Strength",
-          entry: `[Vescio Nexus Gym Renewal] ${renewMember.memberName} · ${pkg.name} (${renewMember.branch})`,
-          memo: `[Vescio Nexus Gym Renewal] ${renewMember.memberName} · ${pkg.name} (${renewMember.branch})`,
-          type: "Revenue",
-          amount: pkg.price,
-          status: "Collected",
-          branch: renewMember.branch,
-        });
+        await setEntity(
+          "ledger",
+          normalizeDoubleEntryLedger({
+            id: `led-gym-renew-${Date.now()}`,
+            date: todayStr,
+            account: "Gym & S&C Membership Revenue",
+            category: "Gym & Strength",
+            module: "gym",
+            entry: `[Vescio Nexus Gym Renewal] ${renewMember.memberName} · ${pkg.name} (${renewMember.branch})`,
+            memo: `[Vescio Nexus Gym Renewal] ${renewMember.memberName} · ${pkg.name} (${renewMember.branch})`,
+            type: "Revenue",
+            amount: pkg.price,
+            status: "Collected",
+            branch: renewMember.branch,
+            referenceId: renewMember.id,
+          }),
+        );
       }
 
       setRenewMember(null);
       toast.success(`Renewed ${renewMember.memberName} on ${pkg.name} until ${nextExpiry}`);
+    } catch {
+      /* Error toast handled by data-store */
+    }
+  };
+
+  const handleSettleGymBalance = async (member: GymMember) => {
+    const due = Number(member.balance) || 0;
+    if (due <= 0) return;
+    try {
+      const updated: GymMember = {
+        ...member,
+        balance: 0,
+        updatedAt: new Date().toISOString(),
+      };
+      await setEntity("gymMembers", updated);
+      await setEntity(
+        "ledger",
+        normalizeDoubleEntryLedger({
+          id: `led-gym-settle-${Date.now()}`,
+          date: todayStr,
+          account: "Gym & S&C Membership Revenue",
+          category: "Gym & Strength",
+          module: "gym",
+          entry: `[Vescio Nexus Gym Balance Settlement] ${member.memberName} · ${member.packageName} (${member.branch})`,
+          memo: `[Vescio Nexus Gym Balance Settlement] ${member.memberName} · ${member.packageName} (${member.branch})`,
+          type: "Revenue",
+          amount: due,
+          status: "Collected",
+          branch: member.branch,
+          referenceId: member.id,
+        }),
+      );
+      toast.success(
+        `Settled ${money(db, due)} balance for ${member.memberName} to the Financial Ledger`,
+      );
     } catch {
       /* Error toast handled by data-store */
     }
@@ -997,18 +1040,23 @@ export const NexusGymModule: React.FC<NexusGymModuleProps> = ({
         await setEntity("gymMembers", mirroredMember);
 
         if (!existing && selectedPkg && selectedPkg.price > 0) {
-          await setEntity("ledger", {
-            id: `led-coach-pool-${Date.now()}`,
-            date: todayStr,
-            account: "Gym & S&C Membership Revenue",
-            category: "Gym & Strength",
-            entry: `[Vescio Nexus Coach-as-Client Pool] ${coachRecord.name} purchased ${selectedPkg.name} (${coachRecord.branch})`,
-            memo: `[Vescio Nexus Coach-as-Client Pool] ${coachRecord.name} purchased ${selectedPkg.name}`,
-            type: "Revenue",
-            amount: selectedPkg.price,
-            status: "Collected",
-            branch: coachRecord.branch,
-          });
+          await setEntity(
+            "ledger",
+            normalizeDoubleEntryLedger({
+              id: `led-coach-pool-${Date.now()}`,
+              date: todayStr,
+              account: "Gym & S&C Membership Revenue",
+              category: "Gym & Strength",
+              module: "gym",
+              entry: `[Vescio Nexus Coach-as-Client Pool] ${coachRecord.name} purchased ${selectedPkg.name} (${coachRecord.branch})`,
+              memo: `[Vescio Nexus Coach-as-Client Pool] ${coachRecord.name} purchased ${selectedPkg.name}`,
+              type: "Revenue",
+              amount: selectedPkg.price,
+              status: "Collected",
+              branch: coachRecord.branch,
+              referenceId: coachRecord.id,
+            }),
+          );
         }
       }
 
@@ -1094,18 +1142,23 @@ export const NexusGymModule: React.FC<NexusGymModuleProps> = ({
       await setEntity("gymMembers", mirroredMember);
 
       if (coachTopUpPaidNow && pkg.price > 0) {
-        await setEntity("ledger", {
-          id: `led-coach-topup-${Date.now()}`,
-          date: todayStr,
-          account: "Gym & S&C Membership Revenue",
-          category: "Gym & Strength",
-          entry: `[Vescio Nexus Coach-as-Client Top-Up] ${updatedCoach.name} purchased ${pkg.name} (+${addedSessions} sessions)`,
-          memo: `[Vescio Nexus Coach-as-Client Top-Up] ${updatedCoach.name} purchased ${pkg.name} (+${addedSessions} sessions)`,
-          type: "Revenue",
-          amount: pkg.price,
-          status: "Collected",
-          branch: updatedCoach.branch,
-        });
+        await setEntity(
+          "ledger",
+          normalizeDoubleEntryLedger({
+            id: `led-coach-topup-${Date.now()}`,
+            date: todayStr,
+            account: "Gym & S&C Membership Revenue",
+            category: "Gym & Strength",
+            module: "gym",
+            entry: `[Vescio Nexus Coach-as-Client Top-Up] ${updatedCoach.name} purchased ${pkg.name} (+${addedSessions} sessions)`,
+            memo: `[Vescio Nexus Coach-as-Client Top-Up] ${updatedCoach.name} purchased ${pkg.name} (+${addedSessions} sessions)`,
+            type: "Revenue",
+            amount: pkg.price,
+            status: "Collected",
+            branch: updatedCoach.branch,
+            referenceId: updatedCoach.id,
+          }),
+        );
       }
 
       setCoachTopUpTarget(null);
@@ -2560,6 +2613,15 @@ export const NexusGymModule: React.FC<NexusGymModuleProps> = ({
 
                         <td className="py-3 px-3 text-right">
                           <div className="flex items-center justify-end gap-1.5">
+                            {(member.balance || 0) > 0 && (
+                              <Btn
+                                variant="primary"
+                                size="sm"
+                                onClick={() => handleSettleGymBalance(member)}
+                              >
+                                Settle Balance ({money(db, member.balance || 0)})
+                              </Btn>
+                            )}
                             <Btn
                               variant="secondary"
                               size="sm"

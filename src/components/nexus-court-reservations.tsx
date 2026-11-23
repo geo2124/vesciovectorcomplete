@@ -49,6 +49,7 @@ import {
   type CourtReservation,
   type LedgerEntry,
 } from "@/lib/data-store";
+import { normalizeDoubleEntryLedger } from "@/lib/accounting-coa";
 
 export interface NexusCourtReservationsProps {
   branchFilter: string;
@@ -641,6 +642,7 @@ export function NexusCourtReservationsModule({
     freePass: boolean;
     discountPercent: string;
     discountFixedAmount: string;
+    collectPaymentNow: boolean;
     notes: string;
   }>({
     clientType: "External Client",
@@ -665,6 +667,7 @@ export function NexusCourtReservationsModule({
     freePass: false,
     discountPercent: "0",
     discountFixedAmount: "0",
+    collectPaymentNow: false,
     notes: "",
   });
 
@@ -743,6 +746,7 @@ export function NexusCourtReservationsModule({
       freePass: false,
       discountPercent: "0",
       discountFixedAmount: "0",
+      collectPaymentNow: false,
       notes: "",
     });
     setBookingModalOpen(true);
@@ -797,6 +801,7 @@ export function NexusCourtReservationsModule({
       freePass: Boolean(res.freePass || res.paymentStatus === "Free Pass"),
       discountPercent: String(res.discountPercent ?? 0),
       discountFixedAmount: String(res.discountFixedAmount ?? 0),
+      collectPaymentNow: res.paymentStatus === "Paid",
       notes: res.notes || "",
     });
     setBookingModalOpen(true);
@@ -1133,6 +1138,9 @@ export function NexusCourtReservationsModule({
       return;
     }
 
+    const shouldCashInUpfront =
+      bookingForm.collectPaymentNow && !bookingForm.freePass && pricingPreview.finalPayable > 0;
+    const staffName = currentUser?.name || "Facility Staff";
     const groupId = weeksCount > 1 ? uid("rec-wks") : undefined;
     const recordsToCreate: CourtReservation[] = datesToCreate.map((slotDate) => ({
       id: uid("res"),
@@ -1158,8 +1166,11 @@ export function NexusCourtReservationsModule({
       discountFixedAmount: pricingPreview.discountFixedAmount,
       hourlyRate: pricingPreview.effectiveHourly,
       totalAmount: pricingPreview.finalPayable,
-      paidAmount: 0,
-      paymentStatus: bookingForm.freePass ? "Free Pass" : "Pending",
+      paidAmount: shouldCashInUpfront ? pricingPreview.finalPayable : 0,
+      paymentStatus: bookingForm.freePass ? "Free Pass" : shouldCashInUpfront ? "Paid" : "Pending",
+      ...(shouldCashInUpfront
+        ? { paymentMethod: "Cash" as const, cashedInAt: nowIso, cashedInBy: staffName }
+        : {}),
       bookingType: weeksCount > 1 ? "recurring" : "walk_in",
       recurrenceMode: weeksCount > 1 ? "weeks" : "single",
       isRecurring: weeksCount > 1,
@@ -1181,6 +1192,26 @@ export function NexusCourtReservationsModule({
         localSessions: sessions,
       });
       for (const record of recordsToCreate) {
+        if (shouldCashInUpfront && record.paidAmount > 0) {
+          const ledId = uid("led-res");
+          const upfrontEntry = normalizeDoubleEntryLedger({
+            id: ledId,
+            date: today,
+            account: "Court Rental Income (Vescio Nexus)",
+            category: "Facility Reservation",
+            module: "courts",
+            entry: `Court Cash-In · ${record.clientName} (${record.court} · ${record.courtAllocation})`,
+            description: `Session ${record.date} ${record.startTime}-${record.endTime} · ${record.rateType || "Court Rental"} · Cash`,
+            type: "Revenue",
+            amount: record.paidAmount,
+            status: "Collected",
+            paymentMethod: "Cash",
+            branch: record.branch,
+            referenceId: record.id,
+          });
+          await setEntity("ledger", upfrontEntry);
+          record.ledgerEntryId = ledId;
+        }
         await setEntity("courtReservations", record);
       }
 
@@ -1525,11 +1556,12 @@ export function NexusCourtReservationsModule({
           }
         } else {
           ledgerId = uid("led-res");
-          const ledgerEntry: LedgerEntry = {
+          const ledgerEntry = normalizeDoubleEntryLedger({
             id: ledgerId,
             date: today,
             account: "Court Rental Income (Vescio Nexus)",
             category: "Facility Reservation",
+            module: "courts",
             entry: `Court Cash-In · ${concrete.clientName} (${concrete.court} · ${concrete.courtAllocation})`,
             description: `Session ${concrete.date} ${concrete.startTime}-${concrete.endTime} · ${concrete.rateType || "Court Rental"} · ${cashInPaymentMethod}`,
             type: "Revenue",
@@ -1538,7 +1570,7 @@ export function NexusCourtReservationsModule({
             paymentMethod: cashInPaymentMethod,
             branch: concrete.branch,
             referenceId: concrete.id,
-          };
+          });
           await setEntity("ledger", ledgerEntry);
         }
       }
@@ -1616,6 +1648,13 @@ export function NexusCourtReservationsModule({
         return;
       }
       if (item.reservation) {
+        const prevPaid = Number(item.reservation.paidAmount) || 0;
+        const wasCashedIn =
+          prevPaid > 0 &&
+          (item.reservation.paymentStatus === "Paid" ||
+            item.reservation.paymentStatus === "Partial" ||
+            item.reservation.status === "Completed");
+
         const cancelledRes: CourtReservation = {
           ...item.reservation,
           status: "Cancelled",
@@ -1632,8 +1671,32 @@ export function NexusCourtReservationsModule({
           status: "Cancelled",
           updatedAt: cancelledRes.updatedAt,
         });
+
+        if (wasCashedIn) {
+          const reversalEntry = normalizeDoubleEntryLedger({
+            id: uid("led-rev"),
+            date: today,
+            account: "Court Rental Refund / Reversal",
+            category: "Facility Reservation",
+            module: "courts",
+            entry: `Court Rental Refund / Reversal · ${item.reservation.clientName} (${item.reservation.court} · ${item.reservation.courtAllocation})`,
+            description: `Cancelled cashed-in session ${item.reservation.date} ${item.reservation.startTime}-${item.reservation.endTime}`,
+            type: "Expense",
+            amount: prevPaid,
+            status: "Paid",
+            paymentMethod: item.reservation.paymentMethod || "Cash",
+            branch: item.reservation.branch,
+            referenceId: item.reservation.id,
+          });
+          await setEntity("ledger", reversalEntry);
+        }
+
         setSelectedSessionItem(null);
-        toast.success(`Cancelled booking for ${item.title} on ${item.date}.`);
+        toast.success(
+          wasCashedIn
+            ? `Cancelled booking & posted ${money(prevPaid)} refund reversal to the Financial Ledger.`
+            : `Cancelled booking for ${item.title} on ${item.date}.`,
+        );
       }
     } catch {
       /* Error toast handled by data-store */
@@ -3303,6 +3366,27 @@ export function NexusCourtReservationsModule({
                 />
               </Field>
             </div>
+
+            {!editingReservation && !bookingForm.freePass && (
+              <label className="flex cursor-pointer items-center gap-2.5 rounded-md border border-ink-800 bg-ink-900/80 px-3 py-2 text-xs text-ink-200 hover:border-court-500/40">
+                <input
+                  type="checkbox"
+                  checked={bookingForm.collectPaymentNow}
+                  onChange={(e) =>
+                    setBookingForm({ ...bookingForm, collectPaymentNow: e.target.checked })
+                  }
+                  className="h-4 w-4 accent-emerald-500"
+                />
+                <span className="font-medium text-ink-100">
+                  Collect Payment Now (Cash-In on Creation)
+                </span>
+                <span className="ml-auto font-mono text-[11px] text-emerald-400">
+                  {bookingForm.collectPaymentNow
+                    ? `Will post ${money(pricingPreview.finalPayable)} to Ledger`
+                    : "Pay later on Cash-In"}
+                </span>
+              </label>
+            )}
 
             <Field label="Booking Notes (Optional)">
               <Textarea

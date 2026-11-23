@@ -48,6 +48,17 @@ const CameraCapture = lazy(() =>
 );
 
 import { WhatsAppGroupsManager } from "@/components/whatsapp-groups-manager";
+import { normalizeDoubleEntryLedger, type LedgerModule } from "@/lib/accounting-coa";
+
+const MODULE_COST_CENTER_OPTIONS: Array<{ label: string; value: LedgerModule }> = [
+  { label: "Academy", value: "academy" },
+  { label: "Nexus Courts", value: "courts" },
+  { label: "Nexus Gym", value: "gym" },
+  { label: "Nexus Physio", value: "physio" },
+  { label: "Nexus Kiosk POS", value: "pos" },
+  { label: "Merchandise", value: "merchandise" },
+  { label: "General / Shared", value: "general" },
+];
 
 export const Route = createFileRoute("/branches")({
   head: () => ({
@@ -124,7 +135,12 @@ function BranchesPage() {
   const [expenseOpen, setExpenseOpen] = useState(false);
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
   const [expenseBranch, setExpenseBranch] = useState("");
-  const [expenseForm, setExpenseForm] = useState({ amount: 0, note: "", type: "Rental" });
+  const [expenseForm, setExpenseForm] = useState<{
+    amount: number;
+    note: string;
+    type: string;
+    module: LedgerModule;
+  }>({ amount: 0, note: "", type: "Rental", module: "general" });
   const [expenseSaved, setExpenseSaved] = useState(false);
   const [expenseAttachment, setExpenseAttachment] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -219,6 +235,7 @@ function BranchesPage() {
           category: expenseForm.type,
           amount: Math.abs(expenseForm.amount),
           note: expenseForm.note,
+          module: expenseForm.module,
           ...(attachmentUrl ? { attachment: attachmentUrl } : {}),
         });
         toast.success(`Branch expense updated (${money(expenseForm.amount)}).`);
@@ -238,7 +255,7 @@ function BranchesPage() {
       user?.role === "Accountant";
     const expenseStatus: "Paid" | "Pending" =
       user?.role === "Branch Manager" || !isDirectApproveRole ? "Pending" : "Paid";
-    const newEntry = {
+    const newEntry = normalizeDoubleEntryLedger({
       id: `l-${Date.now().toString(36)}`,
       date: new Date().toISOString().slice(0, 10),
       account: expenseForm.type,
@@ -248,8 +265,9 @@ function BranchesPage() {
       status: expenseStatus,
       note: expenseForm.note,
       branch: expenseBranch,
+      module: expenseForm.module,
       ...(attachmentUrl ? { attachment: attachmentUrl } : {}),
-    };
+    });
     try {
       await setEntity("ledger", newEntry);
       void createAcademyNotification(tenantId, {
@@ -1220,6 +1238,7 @@ function BranchesPage() {
                                         amount: Math.abs(exp.amount),
                                         note: exp.note || "",
                                         type: exp.account || "Rental",
+                                        module: exp.module || "general",
                                       });
                                       setExpenseOpen(true);
                                     }}
@@ -1269,6 +1288,7 @@ function BranchesPage() {
                     amount: 0,
                     note: "",
                     type: db.lists?.["Expense accounts"]?.[0] || "Rental",
+                    module: "general",
                   });
                 }}
               >
@@ -1329,6 +1349,21 @@ function BranchesPage() {
               ).map((opt) => (
                 <option key={opt} value={opt}>
                   {opt}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Module / Cost Center">
+            <select
+              value={expenseForm.module}
+              onChange={(e) =>
+                setExpenseForm({ ...expenseForm, module: e.target.value as LedgerModule })
+              }
+              className="w-full rounded bg-ink-850 px-3 py-2 text-sm text-ink-100 ring-1 ring-ink-700"
+            >
+              {MODULE_COST_CENTER_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
                 </option>
               ))}
             </select>

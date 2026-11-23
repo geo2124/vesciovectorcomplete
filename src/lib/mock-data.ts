@@ -914,6 +914,8 @@ export type CrmLead = {
   offeredPackageId?: string | undefined;
   offeredPackageName?: string | undefined;
   offeredMonthlyFee?: number | undefined;
+  registrationFeeCollected?: number | undefined;
+  registrationFeeLedgerId?: string | undefined;
   offeredDiscountPercent?: number | undefined;
   offerSentDate?: string | undefined;
   linkedPlayerId?: string | undefined;
@@ -1597,6 +1599,9 @@ export type PosTransaction = {
   splitAccountAmount?: number | undefined;
   amountTendered?: number | undefined;
   changeDue?: number | undefined;
+  currency?: "USD" | "LBP" | undefined;
+  originalAmount?: number | undefined;
+  exchangeRate?: number | undefined;
   status: "Completed" | "Refunded";
   notes?: string | undefined;
   createdAt: string;

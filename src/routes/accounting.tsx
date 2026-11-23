@@ -53,6 +53,7 @@ import {
 import { toast } from "sonner";
 import { MonthlyInvoicingModal } from "@/components/monthly-invoicing-modal";
 import { FamilyBundledInvoicingModal } from "@/components/family-bundled-invoicing-modal";
+import { normalizeDoubleEntryLedger, type LedgerModule } from "@/lib/accounting-coa";
 
 const AccountingCharts = lazy(() => import("@/components/accounting-charts"));
 
@@ -94,6 +95,16 @@ const DEFAULT_ACCOUNTS = [
   "Other",
 ];
 
+const MODULE_COST_CENTER_OPTIONS: Array<{ label: string; value: LedgerModule }> = [
+  { label: "Academy", value: "academy" },
+  { label: "Nexus Courts", value: "courts" },
+  { label: "Nexus Gym", value: "gym" },
+  { label: "Nexus Physio", value: "physio" },
+  { label: "Nexus Kiosk POS", value: "pos" },
+  { label: "Merchandise", value: "merchandise" },
+  { label: "General / Shared", value: "general" },
+];
+
 const MONTH_OPTIONS = [
   "January",
   "February",
@@ -130,6 +141,7 @@ const blank: Omit<LedgerEntry, "id"> = {
   paymentMethod: "Cash",
   note: "",
   branch: "",
+  module: "general",
 };
 
 function AccountingPage() {
@@ -698,19 +710,21 @@ function AccountingPage() {
     const finalAmount = Math.abs(form.amount);
     const finalBranch = isBranchScoped ? userBranch : form.branch;
     if (editing) {
-      await editLedgerTransaction(editing.id, {
+      const normalizedUpdate = normalizeDoubleEntryLedger({
+        ...editing,
         ...form,
         branch: finalBranch,
         amount: finalAmount,
       });
+      await editLedgerTransaction(editing.id, normalizedUpdate);
       toast.success("Transaction updated and linked balances reconciled.");
     } else {
-      const entryData: LedgerEntry = {
+      const entryData: LedgerEntry = normalizeDoubleEntryLedger({
         ...form,
         branch: finalBranch,
         id: `l-${Date.now()}`,
         amount: finalAmount,
-      };
+      });
       await setEntity("ledger", entryData);
       toast.success("Ledger entry added.");
     }
@@ -817,7 +831,7 @@ function AccountingPage() {
         advanceReason: isAdvancePayout ? trimmedAdvanceReason : undefined,
         linkedAdvanceSessionsCount: linkedSessionsVal,
       });
-      const debitEntry: LedgerEntry = {
+      const debitEntry: LedgerEntry = normalizeDoubleEntryLedger({
         ...rawDebitEntry,
         id: isAdvancePayout
           ? `${rawDebitEntry.id}-adv-${Date.now().toString(36)}`
@@ -825,7 +839,8 @@ function AccountingPage() {
         type: "Expense",
         amount: Math.abs(rawDebitEntry.amount),
         referenceId: detReferenceId,
-      };
+        module: "academy",
+      });
 
       const matchedCoachObj = db.coaches.find((c) => c.id === coachRow.coachId);
       const currentCoachOutstanding =
@@ -932,12 +947,13 @@ function AccountingPage() {
         referenceId: detReferenceId,
         payrollMonth,
       });
-      return {
+      return normalizeDoubleEntryLedger({
         ...raw,
         type: "Expense" as const,
         amount: Math.abs(raw.amount),
         referenceId: detReferenceId,
-      };
+        module: "academy",
+      });
     });
 
     const existingRefIds = new Set(db.ledger.map((l) => l.referenceId).filter(Boolean));
@@ -3173,6 +3189,13 @@ function AccountingPage() {
               value={form.paymentMethod || "Cash"}
               onChange={(v) => setForm({ ...form, paymentMethod: v })}
               options={[...SUPPORTED_PAYMENT_METHODS]}
+            />
+          </Field>
+          <Field label="Module / Cost Center">
+            <Select
+              value={form.module || "general"}
+              onChange={(v) => setForm({ ...form, module: v as LedgerModule })}
+              options={MODULE_COST_CENTER_OPTIONS}
             />
           </Field>
 
