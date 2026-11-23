@@ -251,6 +251,12 @@ export type LedgerEntry = {
   advanceReason?: string;
   linkedAdvanceSessionsCount?: number;
   linkedAdvanceSessionIds?: string[];
+  module?: "academy" | "courts" | "gym" | "physio" | "pos" | "merchandise" | "crm" | "general";
+  debitAccount?: string;
+  creditAccount?: string;
+  currency?: "USD" | "LBP";
+  originalAmount?: number;
+  exchangeRate?: number;
 };
 
 export type MerchandiseTransactionParams = {
