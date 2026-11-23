@@ -53,7 +53,18 @@ import {
 import { toast } from "sonner";
 import { MonthlyInvoicingModal } from "@/components/monthly-invoicing-modal";
 import { FamilyBundledInvoicingModal } from "@/components/family-bundled-invoicing-modal";
-import { normalizeDoubleEntryLedger, type LedgerModule } from "@/lib/accounting-coa";
+import {
+  normalizeDoubleEntryLedger,
+  inferLedgerModule,
+  CHART_OF_ACCOUNTS,
+  COA_BY_CODE,
+  COA_BY_LABEL,
+  computeTrialBalance,
+  type LedgerModule,
+  type NormalizedLedgerEntry,
+  type ChartOfAccountItem,
+} from "@/lib/accounting-coa";
+import { exportPnlStatementPdf, type PnlPdfLineItem } from "@/lib/pdf-export";
 
 const AccountingCharts = lazy(() => import("@/components/accounting-charts"));
 
@@ -102,8 +113,164 @@ const MODULE_COST_CENTER_OPTIONS: Array<{ label: string; value: LedgerModule }> 
   { label: "Nexus Physio", value: "physio" },
   { label: "Nexus Kiosk POS", value: "pos" },
   { label: "Merchandise", value: "merchandise" },
+  { label: "CRM", value: "crm" },
   { label: "General / Shared", value: "general" },
 ];
+
+const REPORT_MODULE_FILTER_OPTIONS: Array<{ label: string; value: "" | LedgerModule }> = [
+  { label: "All Modules (Consolidated)", value: "" },
+  { label: "Academy", value: "academy" },
+  { label: "Nexus Courts", value: "courts" },
+  { label: "Nexus Gym", value: "gym" },
+  { label: "Nexus Physio", value: "physio" },
+  { label: "Nexus Kiosk POS", value: "pos" },
+  { label: "Merchandise", value: "merchandise" },
+  { label: "CRM", value: "crm" },
+  { label: "General / Shared", value: "general" },
+];
+
+const MODULE_BADGE_META: Record<LedgerModule, { label: string; badgeClass: string }> = {
+  academy: {
+    label: "Academy",
+    badgeClass: "bg-court-500/15 text-court-300 ring-1 ring-court-500/30",
+  },
+  courts: {
+    label: "Nexus Courts",
+    badgeClass: "bg-sky-500/15 text-sky-300 ring-1 ring-sky-500/30",
+  },
+  gym: {
+    label: "Nexus Gym",
+    badgeClass: "bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30",
+  },
+  physio: {
+    label: "Nexus Physio",
+    badgeClass: "bg-rose-500/15 text-rose-300 ring-1 ring-rose-500/30",
+  },
+  pos: {
+    label: "Kiosk POS",
+    badgeClass: "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30",
+  },
+  merchandise: {
+    label: "Merchandise",
+    badgeClass: "bg-purple-500/15 text-purple-300 ring-1 ring-purple-500/30",
+  },
+  crm: {
+    label: "CRM",
+    badgeClass: "bg-indigo-500/15 text-indigo-300 ring-1 ring-indigo-500/30",
+  },
+  general: {
+    label: "General / Shared",
+    badgeClass: "bg-ink-800 text-ink-300 ring-1 ring-ink-700",
+  },
+};
+
+function resolveCoaAccountItem(accountLabelOrCode: string): ChartOfAccountItem {
+  const trimmed = (accountLabelOrCode || "").trim();
+  if (COA_BY_LABEL[trimmed]) return COA_BY_LABEL[trimmed];
+  if (COA_BY_CODE[trimmed]) return COA_BY_CODE[trimmed];
+  const prefix = trimmed.slice(0, 4);
+  if (COA_BY_CODE[prefix]) return COA_BY_CODE[prefix];
+  const lower = trimmed.toLowerCase();
+  const matched = CHART_OF_ACCOUNTS.find(
+    (item) => item.name.toLowerCase() === lower || item.label.toLowerCase() === lower,
+  );
+  return matched || COA_BY_CODE["6500"];
+}
+
+interface VerticalPnlColumnMetrics {
+  grossRevenue: number;
+  directCogs: number;
+  grossProfit: number;
+  grossMarginPct: number;
+  operatingExpenses: number;
+  netOperatingIncome: number;
+  netMarginPct: number;
+  coaLineItems: PnlPdfLineItem[];
+}
+
+function computePnlFromNormalizedEntries(
+  entries: NormalizedLedgerEntry[],
+): VerticalPnlColumnMetrics {
+  const coaTotalsCents = new Map<string, number>();
+  for (const coa of CHART_OF_ACCOUNTS) {
+    if (coa.category === "Revenue" || coa.category === "COGS" || coa.category === "Expense") {
+      coaTotalsCents.set(coa.code, 0);
+    }
+  }
+
+  let grossRevenueCents = 0;
+  let directCogsCents = 0;
+  let operatingExpensesCents = 0;
+
+  for (const norm of entries) {
+    const amountCents = Math.round(Math.abs(Number(norm.amount) || 0) * 100);
+    if (amountCents === 0) continue;
+
+    const debitCoa = resolveCoaAccountItem(norm.debitAccount);
+    const creditCoa = resolveCoaAccountItem(norm.creditAccount);
+
+    // Credit leg impact on nominal P&L accounts
+    if (creditCoa.category === "Revenue") {
+      grossRevenueCents += amountCents;
+      coaTotalsCents.set(creditCoa.code, (coaTotalsCents.get(creditCoa.code) || 0) + amountCents);
+    } else if (creditCoa.category === "COGS") {
+      directCogsCents -= amountCents;
+      coaTotalsCents.set(creditCoa.code, (coaTotalsCents.get(creditCoa.code) || 0) - amountCents);
+    } else if (creditCoa.category === "Expense") {
+      operatingExpensesCents -= amountCents;
+      coaTotalsCents.set(creditCoa.code, (coaTotalsCents.get(creditCoa.code) || 0) - amountCents);
+    }
+
+    // Debit leg impact on nominal P&L accounts (including contra-revenue refunds)
+    if (debitCoa.category === "Revenue") {
+      grossRevenueCents -= amountCents;
+      coaTotalsCents.set(debitCoa.code, (coaTotalsCents.get(debitCoa.code) || 0) - amountCents);
+    } else if (debitCoa.category === "COGS") {
+      directCogsCents += amountCents;
+      coaTotalsCents.set(debitCoa.code, (coaTotalsCents.get(debitCoa.code) || 0) + amountCents);
+    } else if (debitCoa.category === "Expense") {
+      operatingExpensesCents += amountCents;
+      coaTotalsCents.set(debitCoa.code, (coaTotalsCents.get(debitCoa.code) || 0) + amountCents);
+    }
+  }
+
+  const grossRevenue = Number((grossRevenueCents / 100).toFixed(2));
+  const directCogs = Number((directCogsCents / 100).toFixed(2));
+  const grossProfitCents = grossRevenueCents - directCogsCents;
+  const grossProfit = Number((grossProfitCents / 100).toFixed(2));
+  const grossMarginPct =
+    grossRevenue > 0 ? Number(((grossProfit / grossRevenue) * 100).toFixed(1)) : 0;
+
+  const operatingExpenses = Number((operatingExpensesCents / 100).toFixed(2));
+  const netOperatingIncomeCents = grossProfitCents - operatingExpensesCents;
+  const netOperatingIncome = Number((netOperatingIncomeCents / 100).toFixed(2));
+  const netMarginPct =
+    grossRevenue > 0 ? Number(((netOperatingIncome / grossRevenue) * 100).toFixed(1)) : 0;
+
+  const coaLineItems: PnlPdfLineItem[] = [];
+  for (const coa of CHART_OF_ACCOUNTS) {
+    if (coa.category === "Revenue" || coa.category === "COGS" || coa.category === "Expense") {
+      const cents = coaTotalsCents.get(coa.code) || 0;
+      coaLineItems.push({
+        code: coa.code,
+        accountName: coa.label,
+        section: coa.category,
+        amount: Number((cents / 100).toFixed(2)),
+      });
+    }
+  }
+
+  return {
+    grossRevenue,
+    directCogs,
+    grossProfit,
+    grossMarginPct,
+    operatingExpenses,
+    netOperatingIncome,
+    netMarginPct,
+    coaLineItems,
+  };
+}
 
 const MONTH_OPTIONS = [
   "January",
@@ -367,6 +534,8 @@ function AccountingPage() {
   const [q, setQ] = useState("");
   const [type, setType] = useState("");
   const [account, setAccount] = useState("");
+  const [ledgerBranchFilter, setLedgerBranchFilter] = useState(isBranchScoped ? userBranch : "");
+  const [ledgerModuleFilter, setLedgerModuleFilter] = useState<"" | LedgerModule>("");
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<LedgerEntry | null>(null);
   const [form, setForm] = useState<Omit<LedgerEntry, "id">>(blank);
@@ -407,19 +576,66 @@ function AccountingPage() {
   // Report state
   const [reportBranch, setReportBranch] = useState(isBranchScoped ? userBranch : "");
   const [reportMonth, setReportMonth] = useState("");
+  const [reportStartDate, setReportStartDate] = useState("");
+  const [reportEndDate, setReportEndDate] = useState("");
+  const [reportDatePreset, setReportDatePreset] = useState<
+    "this_month" | "last_month" | "ytd" | "all_time" | "custom"
+  >("all_time");
+  const [reportModule, setReportModule] = useState<"" | LedgerModule>("");
+  const [reportSubView, setReportSubView] = useState<"all" | "pnl" | "trial_balance">("all");
+
+  const applyReportDatePreset = (preset: "this_month" | "last_month" | "ytd" | "all_time") => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth(); // 0-indexed
+    setReportDatePreset(preset);
+    setReportMonth("");
+
+    if (preset === "all_time") {
+      setReportStartDate("");
+      setReportEndDate("");
+      return;
+    }
+    if (preset === "this_month") {
+      const start = `${year}-${String(month + 1).padStart(2, "0")}-01`;
+      const lastDay = new Date(year, month + 1, 0).getDate();
+      const end = `${year}-${String(month + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+      setReportStartDate(start);
+      setReportEndDate(end);
+      return;
+    }
+    if (preset === "last_month") {
+      const prevDate = new Date(year, month - 1, 1);
+      const pYear = prevDate.getFullYear();
+      const pMonth = prevDate.getMonth();
+      const lastDay = new Date(pYear, pMonth + 1, 0).getDate();
+      const start = `${pYear}-${String(pMonth + 1).padStart(2, "0")}-01`;
+      const end = `${pYear}-${String(pMonth + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+      setReportStartDate(start);
+      setReportEndDate(end);
+      return;
+    }
+    if (preset === "ytd") {
+      const start = `${year}-01-01`;
+      const end = now.toISOString().slice(0, 10);
+      setReportStartDate(start);
+      setReportEndDate(end);
+    }
+  };
 
   useEffect(() => {
     if (isBranchScoped && userBranch) {
       setPayrollBranch(userBranch);
       setInvoiceBranchFilter(userBranch);
       setReportBranch(userBranch);
+      setLedgerBranchFilter(userBranch);
       setTargetBranch(userBranch);
     }
   }, [isBranchScoped, userBranch]);
 
   useEffect(() => {
     setPage(1);
-  }, [q, type, account]);
+  }, [q, type, account, ledgerBranchFilter, ledgerModuleFilter]);
 
   useEffect(() => {
     setInvoicePage(1);
@@ -599,6 +815,144 @@ function AccountingPage() {
     );
   }, [payrollComputation.rows, payrollQuery]);
 
+  // Stats (Realized Only: Collected / Paid, excluding Pending & Voided)
+  const revenue = realizedLedger
+    .filter((l) => l.type === "Revenue" || (l.type as string) === "credit")
+    .reduce((acc, l) => acc + Math.abs(l.amount), 0);
+  const expense = realizedLedger
+    .filter((l) => l.type === "Expense" || (l.type as string) === "debit")
+    .reduce((acc, l) => acc + Math.abs(l.amount), 0);
+  const outstandingPlayers = players.reduce((acc, p) => acc + Math.max(0, p.balance || 0), 0);
+
+  // ---- LEDGER TAB ----
+  const normalizedBaseLedger = useMemo(
+    () => baseLedger.map((l) => normalizeDoubleEntryLedger(l)),
+    [baseLedger],
+  );
+
+  const filteredLedger = useMemo(() => {
+    const qLower = q.trim().toLowerCase();
+    return normalizedBaseLedger
+      .filter((l) => {
+        const matchesQ =
+          !qLower ||
+          [
+            l.entry,
+            l.description,
+            l.account,
+            l.debitAccount,
+            l.creditAccount,
+            l.module,
+            l.referenceId,
+            l.note,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase()
+            .includes(qLower);
+        const matchesType = !type || l.type === type;
+        const matchesAccount =
+          !account ||
+          l.account === account ||
+          l.debitAccount === account ||
+          l.creditAccount === account;
+        const matchesBranch =
+          !ledgerBranchFilter ||
+          (l.branch || "").toLowerCase() === ledgerBranchFilter.toLowerCase();
+        const matchesModule = !ledgerModuleFilter || l.module === ledgerModuleFilter;
+        return matchesQ && matchesType && matchesAccount && matchesBranch && matchesModule;
+      })
+      .sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
+  }, [normalizedBaseLedger, q, type, account, ledgerBranchFilter, ledgerModuleFilter]);
+
+  const runningBalanceById = useMemo(() => {
+    const map = new Map<string, number>();
+    const chronological = [...filteredLedger].sort(
+      (a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id),
+    );
+    let runningCents = 0;
+    for (const item of chronological) {
+      const amtCents = Math.round(Math.abs(Number(item.amount) || 0) * 100);
+      const isRev = item.type === "Revenue" || (item.type as string) === "credit";
+      runningCents += isRev ? amtCents : -amtCents;
+      map.set(item.id, Number((runningCents / 100).toFixed(2)));
+    }
+    return map;
+  }, [filteredLedger]);
+
+  // ---- REPORTS TAB (Phase 3 Double-Entry P&L, Multi-Vertical Matrix & Trial Balance) ----
+  const reportDateAndBranchNormalizedLedger = useMemo(() => {
+    return realizedLedger
+      .filter((l) => {
+        const matchesBranch = !reportBranch || l.branch === reportBranch;
+        const matchesMonth = !reportMonth || l.date.startsWith(reportMonth);
+        const matchesStart = !reportStartDate || l.date >= reportStartDate;
+        const matchesEnd = !reportEndDate || l.date <= reportEndDate;
+        return matchesBranch && matchesMonth && matchesStart && matchesEnd;
+      })
+      .map((l) => normalizeDoubleEntryLedger(l));
+  }, [realizedLedger, reportBranch, reportMonth, reportStartDate, reportEndDate]);
+
+  const reportLedger = useMemo(() => {
+    if (!reportModule) return reportDateAndBranchNormalizedLedger;
+    return reportDateAndBranchNormalizedLedger.filter((l) => inferLedgerModule(l) === reportModule);
+  }, [reportDateAndBranchNormalizedLedger, reportModule]);
+
+  const activeReportPnl = useMemo(
+    () => computePnlFromNormalizedEntries(reportLedger),
+    [reportLedger],
+  );
+
+  const multiVerticalMatrix = useMemo(() => {
+    const byCol = {
+      academy: computePnlFromNormalizedEntries(
+        reportDateAndBranchNormalizedLedger.filter((e) => e.module === "academy"),
+      ),
+      courts: computePnlFromNormalizedEntries(
+        reportDateAndBranchNormalizedLedger.filter((e) => e.module === "courts"),
+      ),
+      gym: computePnlFromNormalizedEntries(
+        reportDateAndBranchNormalizedLedger.filter((e) => e.module === "gym"),
+      ),
+      physio: computePnlFromNormalizedEntries(
+        reportDateAndBranchNormalizedLedger.filter((e) => e.module === "physio"),
+      ),
+      pos: computePnlFromNormalizedEntries(
+        reportDateAndBranchNormalizedLedger.filter((e) => e.module === "pos"),
+      ),
+      merchandise: computePnlFromNormalizedEntries(
+        reportDateAndBranchNormalizedLedger.filter((e) => e.module === "merchandise"),
+      ),
+      generalCrm: computePnlFromNormalizedEntries(
+        reportDateAndBranchNormalizedLedger.filter(
+          (e) => e.module === "general" || e.module === "crm",
+        ),
+      ),
+      consolidated: computePnlFromNormalizedEntries(reportDateAndBranchNormalizedLedger),
+    };
+    return byCol;
+  }, [reportDateAndBranchNormalizedLedger]);
+
+  const reportTrialBalance = useMemo(() => computeTrialBalance(reportLedger), [reportLedger]);
+
+  const reportRevenue = activeReportPnl.grossRevenue;
+  const reportExpense = Number(
+    (activeReportPnl.directCogs + activeReportPnl.operatingExpenses).toFixed(2),
+  );
+
+  const reportDateRangeLabel = useMemo(() => {
+    if (reportMonth) return reportMonth;
+    if (reportStartDate && reportEndDate) return `${reportStartDate} to ${reportEndDate}`;
+    if (reportStartDate) return `From ${reportStartDate}`;
+    if (reportEndDate) return `Through ${reportEndDate}`;
+    return "All Time";
+  }, [reportMonth, reportStartDate, reportEndDate]);
+
+  const reportModuleScopeLabel = useMemo(() => {
+    const found = REPORT_MODULE_FILTER_OPTIONS.find((o) => o.value === reportModule);
+    return found ? found.label : "All Modules (Consolidated)";
+  }, [reportModule]);
+
   if (authLoading && !currentUser && !user && !passwordUser) {
     return (
       <AppShell crumb="CONTROL / ACCOUNTING" title="Accounting">
@@ -648,39 +1002,38 @@ function AccountingPage() {
     );
   }
 
-  // Stats (Realized Only: Collected / Paid, excluding Pending & Voided)
-  const revenue = realizedLedger
-    .filter((l) => l.type === "Revenue" || (l.type as string) === "credit")
-    .reduce((acc, l) => acc + Math.abs(l.amount), 0);
-  const expense = realizedLedger
-    .filter((l) => l.type === "Expense" || (l.type as string) === "debit")
-    .reduce((acc, l) => acc + Math.abs(l.amount), 0);
-  const outstandingPlayers = players.reduce((acc, p) => acc + Math.max(0, p.balance || 0), 0);
-
-  // ---- LEDGER TAB ----
-  const filteredLedger = baseLedger
-    .filter(
-      (l) =>
-        (!q.trim() || [l.entry, l.account].join(" ").toLowerCase().includes(q.toLowerCase())) &&
-        (!type || l.type === type) &&
-        (!account || l.account === account),
-    )
-    .sort((a, b) => b.date.localeCompare(a.date));
-
   const pagedLedger = filteredLedger.slice((page - 1) * pageSize, page * pageSize);
 
   const exportCsv = () => {
     downloadCsv(
       "ledger.csv",
-      ["Date", "Type", "Account", "Entry", `Amount (${currency})`, "Status", "Branch"],
+      [
+        "Date",
+        "Module",
+        "Type",
+        "Description / Reference",
+        "Debit Account",
+        "Credit Account",
+        "Currency",
+        "Original Amount",
+        "Exchange Rate",
+        "Amount (USD)",
+        "Running Balance (USD)",
+        "Status",
+        "Branch",
+      ],
       filteredLedger.map((l) => [
         l.date,
+        MODULE_BADGE_META[l.module]?.label || l.module,
         l.type,
-        l.account,
         l.entry || l.description || "",
-        String(
-          currency === "LBP" ? Math.round(Math.abs(l.amount) * exchangeRate) : Math.abs(l.amount),
-        ),
+        l.debitAccount,
+        l.creditAccount,
+        l.currency,
+        String(l.originalAmount),
+        String(l.exchangeRate),
+        String(Math.abs(l.amount).toFixed(2)),
+        String((runningBalanceById.get(l.id) ?? 0).toFixed(2)),
         l.status,
         l.branch || "",
       ]),
@@ -689,14 +1042,28 @@ function AccountingPage() {
 
   const exportPdfReport = () => {
     exportPdf(
-      "Ledger Report",
-      ["Date", "Type", "Account", "Entry", "Amount"],
+      "Double-Entry General Ledger Report",
+      [
+        "Date",
+        "Module",
+        "Description",
+        "Debit Account",
+        "Credit Account",
+        "Currency",
+        "Amount (USD)",
+        "Running Bal.",
+      ],
       filteredLedger.map((l) => [
         l.date,
-        l.type,
-        l.account,
+        MODULE_BADGE_META[l.module]?.label || l.module,
         l.entry || l.description || "",
-        money(Math.abs(l.amount)),
+        l.debitAccount,
+        l.creditAccount,
+        l.currency === "LBP"
+          ? `LBP (${l.originalAmount.toLocaleString()} @ ${l.exchangeRate.toLocaleString()})`
+          : "USD",
+        kitMoney(Math.abs(l.amount)),
+        kitMoney(runningBalanceById.get(l.id) ?? 0),
       ]),
     );
   };
@@ -731,19 +1098,142 @@ function AccountingPage() {
     setOpen(false);
   };
 
-  // ---- REPORTS TAB ----
-  const reportLedger = realizedLedger.filter(
-    (l) =>
-      (!reportBranch || l.branch === reportBranch) &&
-      (!reportMonth || l.date.startsWith(reportMonth)),
-  );
+  const handleExportPnlCsv = () => {
+    const rows: string[][] = [];
+    for (const item of activeReportPnl.coaLineItems) {
+      rows.push([item.code, item.accountName, item.section, String(item.amount.toFixed(2))]);
+    }
+    rows.push([
+      "4000-4999",
+      "Total Gross Revenue",
+      "Subtotal",
+      activeReportPnl.grossRevenue.toFixed(2),
+    ]);
+    rows.push([
+      "5000-5999",
+      "Total Direct COGS & Commissions",
+      "Subtotal",
+      activeReportPnl.directCogs.toFixed(2),
+    ]);
+    rows.push([
+      "GP",
+      `Gross Profit (${activeReportPnl.grossMarginPct.toFixed(1)}%)`,
+      "Summary",
+      activeReportPnl.grossProfit.toFixed(2),
+    ]);
+    rows.push([
+      "6000-6999",
+      "Total Operating Expenses",
+      "Subtotal",
+      activeReportPnl.operatingExpenses.toFixed(2),
+    ]);
+    rows.push([
+      "NOI",
+      `Net Operating Income (${activeReportPnl.netMarginPct.toFixed(1)}%)`,
+      "Summary",
+      activeReportPnl.netOperatingIncome.toFixed(2),
+    ]);
 
-  const reportRevenue = reportLedger
-    .filter((l) => l.type === "Revenue" || (l.type as string) === "credit")
-    .reduce((a, l) => a + Math.abs(l.amount), 0);
-  const reportExpense = reportLedger
-    .filter((l) => l.type === "Expense" || (l.type as string) === "debit")
-    .reduce((a, l) => a + Math.abs(l.amount), 0);
+    downloadCsv(
+      `pnl-${reportModule || "consolidated"}-${new Date().toISOString().slice(0, 10)}.csv`,
+      ["COA Code", "Account / Line Item", "Section", "Amount (USD)"],
+      rows,
+    );
+    toast.success(`Exported ${reportModuleScopeLabel} P&L to CSV.`);
+  };
+
+  const handleExportMatrixCsv = () => {
+    const cols = [
+      multiVerticalMatrix.academy,
+      multiVerticalMatrix.courts,
+      multiVerticalMatrix.gym,
+      multiVerticalMatrix.physio,
+      multiVerticalMatrix.pos,
+      multiVerticalMatrix.merchandise,
+      multiVerticalMatrix.generalCrm,
+      multiVerticalMatrix.consolidated,
+    ];
+    const rows: string[][] = [
+      ["1. Gross Revenue (4000–4999)", ...cols.map((c) => c.grossRevenue.toFixed(2))],
+      ["2. Direct COGS & Commissions (5000–5999)", ...cols.map((c) => c.directCogs.toFixed(2))],
+      ["3. Gross Profit ($)", ...cols.map((c) => c.grossProfit.toFixed(2))],
+      ["   Gross Margin (%)", ...cols.map((c) => `${c.grossMarginPct.toFixed(1)}%`)],
+      ["4. Operating Expenses (6000–6999)", ...cols.map((c) => c.operatingExpenses.toFixed(2))],
+      ["5. Net Operating Income ($)", ...cols.map((c) => c.netOperatingIncome.toFixed(2))],
+      ["   Net Margin (%)", ...cols.map((c) => `${c.netMarginPct.toFixed(1)}%`)],
+    ];
+
+    downloadCsv(
+      `multi-vertical-pnl-matrix-${new Date().toISOString().slice(0, 10)}.csv`,
+      [
+        "P&L Line Item",
+        "Academy",
+        "Courts",
+        "Gym",
+        "Physio",
+        "Kiosk POS",
+        "Merchandise",
+        "General / CRM",
+        "Consolidated Total",
+      ],
+      rows,
+    );
+    toast.success("Exported Multi-Vertical P&L Matrix to CSV.");
+  };
+
+  const handleExportTrialBalanceCsv = () => {
+    const rows: string[][] = reportTrialBalance.rows.map((r) => [
+      r.label,
+      r.category,
+      r.normalBalance,
+      r.debitTotal.toFixed(2),
+      r.creditTotal.toFixed(2),
+      r.netBalance.toFixed(2),
+    ]);
+    rows.push([
+      "TOTALS",
+      reportTrialBalance.isBalanced ? "BALANCED" : "OUT OF BALANCE",
+      "—",
+      reportTrialBalance.totalDebits.toFixed(2),
+      reportTrialBalance.totalCredits.toFixed(2),
+      (reportTrialBalance.totalDebits - reportTrialBalance.totalCredits).toFixed(2),
+    ]);
+
+    downloadCsv(
+      `trial-balance-${new Date().toISOString().slice(0, 10)}.csv`,
+      [
+        "Account Code & Name",
+        "Account Class",
+        "Normal Balance",
+        "Total Debits ($)",
+        "Total Credits ($)",
+        "Net Balance ($)",
+      ],
+      rows,
+    );
+    toast.success("Exported Trial Balance & COA to CSV.");
+  };
+
+  const handleExportPnlPdf = async () => {
+    await exportPnlStatementPdf({
+      tenantName: db.academy?.name || "Vescio Vector Academy",
+      dateRangeLabel: reportDateRangeLabel,
+      branchScopeLabel: reportBranch || "All Branches",
+      moduleScopeLabel: reportModuleScopeLabel,
+      currency,
+      formatMoney: money,
+      grossRevenue: activeReportPnl.grossRevenue,
+      directCogs: activeReportPnl.directCogs,
+      grossProfit: activeReportPnl.grossProfit,
+      grossMarginPct: activeReportPnl.grossMarginPct,
+      operatingExpenses: activeReportPnl.operatingExpenses,
+      netOperatingIncome: activeReportPnl.netOperatingIncome,
+      netMarginPct: activeReportPnl.netMarginPct,
+      lineItems: activeReportPnl.coaLineItems,
+      trialBalance: reportTrialBalance,
+    });
+    toast.success("Generated P&L Statement PDF report.");
+  };
 
   const reportPlayers = players
     .filter((p) => !reportBranch || p.branch === reportBranch)
@@ -2319,96 +2809,640 @@ function AccountingPage() {
 
       {activeTab === "reports" && (
         <div className="space-y-6">
-          <div className="flex flex-wrap gap-4 items-center rounded-md bg-ink-900 p-4 border border-ink-800">
-            <span className="text-sm font-medium text-ink-300">Filters:</span>
-            {!isBranchScoped && (
+          {/* Unified Reports Filter & Export Bar */}
+          <div className="rounded-xl bg-ink-900 p-4 border border-ink-800 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-800 pb-3">
+              <div>
+                <div className="text-xs font-mono font-bold uppercase tracking-wider text-court-300">
+                  Per-Module &amp; Consolidated Financial Reporting Engine
+                </div>
+                <div className="text-xs text-ink-400 mt-0.5">
+                  Scope: <strong className="text-ink-200">{reportModuleScopeLabel}</strong> ·
+                  Branch: <strong className="text-ink-200">{reportBranch || "All Branches"}</strong>{" "}
+                  · Period: <strong className="text-ink-200">{reportDateRangeLabel}</strong>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="outline" size="sm" onClick={handleExportPnlCsv}>
+                  Export P&amp;L (CSV)
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleExportMatrixCsv}>
+                  Export Multi-Vertical Matrix (CSV)
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleExportTrialBalanceCsv}>
+                  Export Trial Balance (CSV)
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => {
+                    void handleExportPnlPdf();
+                  }}
+                >
+                  Export P&amp;L Statement (PDF)
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-3 items-end">
+              {!isBranchScoped && (
+                <div className="flex flex-col gap-1">
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-ink-400">
+                    Branch
+                  </span>
+                  <select
+                    aria-label="Branch"
+                    value={reportBranch}
+                    onChange={(e) => setReportBranch(e.target.value)}
+                    className="h-9 rounded-lg border border-ink-750 bg-ink-950 px-3 text-xs text-ink-100"
+                  >
+                    <option value="">All Branches</option>
+                    {db.branches.map((b) => (
+                      <option key={b.id} value={b.name}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div className="flex flex-col gap-1">
+                <span className="font-mono text-[10px] uppercase tracking-wider text-ink-400">
+                  Module / Cost Center
+                </span>
+                <select
+                  aria-label="Module / Cost Center"
+                  value={reportModule}
+                  onChange={(e) => setReportModule(e.target.value as "" | LedgerModule)}
+                  className="h-9 rounded-lg border border-ink-750 bg-ink-950 px-3 text-xs text-ink-100"
+                >
+                  {REPORT_MODULE_FILTER_OPTIONS.map((opt) => (
+                    <option key={opt.value || "all"} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <span className="font-mono text-[10px] uppercase tracking-wider text-ink-400">
+                  Start Date
+                </span>
+                <input
+                  type="date"
+                  aria-label="Start Date"
+                  value={reportStartDate}
+                  onChange={(e) => {
+                    setReportStartDate(e.target.value);
+                    setReportDatePreset("custom");
+                    setReportMonth("");
+                  }}
+                  className="h-9 rounded-lg border border-ink-750 bg-ink-950 px-2.5 font-mono text-xs text-ink-100"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <span className="font-mono text-[10px] uppercase tracking-wider text-ink-400">
+                  End Date
+                </span>
+                <input
+                  type="date"
+                  aria-label="End Date"
+                  value={reportEndDate}
+                  onChange={(e) => {
+                    setReportEndDate(e.target.value);
+                    setReportDatePreset("custom");
+                    setReportMonth("");
+                  }}
+                  className="h-9 rounded-lg border border-ink-750 bg-ink-950 px-2.5 font-mono text-xs text-ink-100"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <span className="font-mono text-[10px] uppercase tracking-wider text-ink-400">
+                  Quick Presets
+                </span>
+                <div className="flex items-center gap-1 rounded-lg border border-ink-750 bg-ink-950 p-1">
+                  {(
+                    [
+                      { id: "this_month", label: "This Month" },
+                      { id: "last_month", label: "Last Month" },
+                      { id: "ytd", label: "YTD" },
+                      { id: "all_time", label: "All Time" },
+                    ] as const
+                  ).map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => applyReportDatePreset(preset.id)}
+                      className={`rounded px-2.5 py-1 font-mono text-[11px] transition-colors ${
+                        reportDatePreset === preset.id
+                          ? "bg-court-500 font-bold text-ink-950"
+                          : "text-ink-300 hover:bg-ink-850 hover:text-ink-100"
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <FilterSelect
-                label="Branch"
-                value={reportBranch}
-                onChange={setReportBranch}
-                options={["", ...db.branches.map((b) => b.name)]}
+                label="Month"
+                value={reportMonth}
+                onChange={(val) => {
+                  setReportMonth(val);
+                  if (val) {
+                    setReportStartDate("");
+                    setReportEndDate("");
+                    setReportDatePreset("custom");
+                  }
+                }}
+                options={["", ...allMonths]}
               />
-            )}
-            <FilterSelect
-              label="Month"
-              value={reportMonth}
-              onChange={setReportMonth}
-              options={["", ...allMonths]}
-            />
+
+              <div className="ml-auto flex items-center gap-1 rounded-lg border border-ink-750 bg-ink-950 p-1">
+                {(
+                  [
+                    { id: "all", label: "All Views" },
+                    { id: "pnl", label: "P&L Matrix" },
+                    { id: "trial_balance", label: "Trial Balance & COA" },
+                  ] as const
+                ).map((sv) => (
+                  <button
+                    key={sv.id}
+                    type="button"
+                    onClick={() => setReportSubView(sv.id)}
+                    className={`rounded px-2.5 py-1 font-mono text-[11px] transition-colors ${
+                      reportSubView === sv.id
+                        ? "bg-court-500/20 font-bold text-court-300 ring-1 ring-court-500/40"
+                        : "text-ink-400 hover:text-ink-200"
+                    }`}
+                  >
+                    {sv.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 sm:gap-4">
             <Stat
               label="Period Revenue"
               value={money(reportRevenue)}
-              note="Filtered collections"
+              note={`${reportModuleScopeLabel} · Gross Revenue (4000–4999)`}
               accent
             />
             <Stat
               label="Period Expenses"
               value={money(reportExpense)}
-              note="Filtered disbursements"
+              note={`COGS ${money(activeReportPnl.directCogs)} + OpEx ${money(activeReportPnl.operatingExpenses)}`}
             />
             <Stat
               label="Net Profit / (Loss)"
-              value={money(reportRevenue - reportExpense)}
-              note={reportRevenue >= reportExpense ? "Net Positive" : "Deficit"}
-              accent={reportRevenue >= reportExpense}
+              value={money(activeReportPnl.netOperatingIncome)}
+              note={`${activeReportPnl.netOperatingIncome >= 0 ? "Net Positive" : "Deficit"} · Net Margin ${activeReportPnl.netMarginPct.toFixed(1)}%`}
+              accent={activeReportPnl.netOperatingIncome >= 0}
             />
           </div>
+
+          {/* 1. Multi-Vertical P&L Matrix Table (Side-by-Side) */}
+          {(reportSubView === "all" || reportSubView === "pnl") && (
+            <Panel
+              title="Multi-Vertical P&L Matrix"
+              meta={`${reportDateRangeLabel} · ${reportBranch || "All Branches"} · Side-by-side double-entry profitability across all 7 operating verticals`}
+            >
+              <div className="overflow-x-auto">
+                <Table
+                  head={
+                    <>
+                      <Th>P&amp;L LINE ITEM (COA RANGE)</Th>
+                      <Th>
+                        <span className="block text-right">ACADEMY</span>
+                      </Th>
+                      <Th>
+                        <span className="block text-right">COURTS</span>
+                      </Th>
+                      <Th>
+                        <span className="block text-right">GYM</span>
+                      </Th>
+                      <Th>
+                        <span className="block text-right">PHYSIO</span>
+                      </Th>
+                      <Th>
+                        <span className="block text-right">KIOSK POS</span>
+                      </Th>
+                      <Th>
+                        <span className="block text-right">MERCHANDISE</span>
+                      </Th>
+                      <Th>
+                        <span className="block text-right">GENERAL / CRM</span>
+                      </Th>
+                      <Th>
+                        <span className="block text-right text-court-300">CONSOLIDATED TOTAL</span>
+                      </Th>
+                    </>
+                  }
+                >
+                  {(() => {
+                    const cols = [
+                      { key: "academy", data: multiVerticalMatrix.academy },
+                      { key: "courts", data: multiVerticalMatrix.courts },
+                      { key: "gym", data: multiVerticalMatrix.gym },
+                      { key: "physio", data: multiVerticalMatrix.physio },
+                      { key: "pos", data: multiVerticalMatrix.pos },
+                      { key: "merchandise", data: multiVerticalMatrix.merchandise },
+                      { key: "generalCrm", data: multiVerticalMatrix.generalCrm },
+                      {
+                        key: "consolidated",
+                        data: multiVerticalMatrix.consolidated,
+                        isTotal: true,
+                      },
+                    ];
+
+                    return (
+                      <>
+                        <Row>
+                          <Td strong>
+                            <div>1. Gross Revenue</div>
+                            <div className="font-mono text-[10px] text-ink-400">COA 4000–4999</div>
+                          </Td>
+                          {cols.map((c) => (
+                            <Td key={c.key} right>
+                              <span
+                                className={`font-mono text-xs ${
+                                  c.isTotal
+                                    ? "font-bold text-court-300"
+                                    : "font-semibold text-court-400"
+                                }`}
+                              >
+                                {money(c.data.grossRevenue)}
+                              </span>
+                            </Td>
+                          ))}
+                        </Row>
+
+                        <Row>
+                          <Td strong>
+                            <div>2. Direct COGS &amp; Commissions</div>
+                            <div className="font-mono text-[10px] text-ink-400">COA 5000–5999</div>
+                          </Td>
+                          {cols.map((c) => (
+                            <Td key={c.key} right>
+                              <span
+                                className={`font-mono text-xs ${
+                                  c.data.directCogs > 0 ? "text-warn" : "text-ink-400"
+                                } ${c.isTotal ? "font-bold" : ""}`}
+                              >
+                                {money(c.data.directCogs)}
+                              </span>
+                            </Td>
+                          ))}
+                        </Row>
+
+                        <Row>
+                          <Td strong>
+                            <div className="text-ink-100">3. Gross Profit &amp; Gross Margin %</div>
+                            <div className="font-mono text-[10px] text-ink-400">
+                              Revenue minus Direct COGS
+                            </div>
+                          </Td>
+                          {cols.map((c) => (
+                            <Td key={c.key} right>
+                              <div
+                                className={`font-mono text-xs font-bold ${
+                                  c.data.grossProfit >= 0 ? "text-ink-100" : "text-bad"
+                                }`}
+                              >
+                                {money(c.data.grossProfit)}
+                              </div>
+                              <div className="font-mono text-[10px] text-ink-400">
+                                {c.data.grossMarginPct.toFixed(1)}%
+                              </div>
+                            </Td>
+                          ))}
+                        </Row>
+
+                        <Row>
+                          <Td strong>
+                            <div>4. Operating Expenses</div>
+                            <div className="font-mono text-[10px] text-ink-400">COA 6000–6999</div>
+                          </Td>
+                          {cols.map((c) => (
+                            <Td key={c.key} right>
+                              <span
+                                className={`font-mono text-xs ${
+                                  c.data.operatingExpenses > 0 ? "text-bad" : "text-ink-400"
+                                } ${c.isTotal ? "font-bold" : ""}`}
+                              >
+                                {money(c.data.operatingExpenses)}
+                              </span>
+                            </Td>
+                          ))}
+                        </Row>
+
+                        <Row>
+                          <Td strong>
+                            <div className="text-court-300">
+                              5. Net Operating Income &amp; Net Margin %
+                            </div>
+                            <div className="font-mono text-[10px] text-ink-400">
+                              Bottom-line vertical contribution
+                            </div>
+                          </Td>
+                          {cols.map((c) => (
+                            <Td key={c.key} right>
+                              <div
+                                className={`font-mono text-xs font-bold ${
+                                  c.data.netOperatingIncome >= 0 ? "text-good" : "text-bad"
+                                }`}
+                              >
+                                {money(c.data.netOperatingIncome)}
+                              </div>
+                              <div className="font-mono text-[10px] text-ink-400">
+                                {c.data.netMarginPct.toFixed(1)}%
+                              </div>
+                            </Td>
+                          ))}
+                        </Row>
+                      </>
+                    );
+                  })()}
+                </Table>
+              </div>
+            </Panel>
+          )}
+
+          {/* Standalone Module P&L Breakdown when a specific Module is selected */}
+          {reportModule && (reportSubView === "all" || reportSubView === "pnl") && (
+            <Panel
+              title={`Standalone Module P&L — ${reportModuleScopeLabel}`}
+              meta={`${reportDateRangeLabel} · ${reportBranch || "All Branches"} · Isolated Chart of Accounts breakdown for ${reportModuleScopeLabel}`}
+            >
+              <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="rounded-lg border border-ink-800 bg-ink-950 p-3.5 space-y-2">
+                  <div className="flex items-center justify-between border-b border-ink-800 pb-1.5">
+                    <span className="font-mono text-xs font-bold text-court-300">
+                      4000–4999 · GROSS REVENUE
+                    </span>
+                    <span className="font-mono text-xs font-bold text-court-400">
+                      {money(activeReportPnl.grossRevenue)}
+                    </span>
+                  </div>
+                  {activeReportPnl.coaLineItems
+                    .filter((item) => item.section === "Revenue")
+                    .map((item) => (
+                      <div key={item.code} className="flex justify-between text-xs py-0.5">
+                        <span className="text-ink-300">{item.accountName}</span>
+                        <span className="font-mono text-ink-100">{money(item.amount)}</span>
+                      </div>
+                    ))}
+                </div>
+
+                <div className="rounded-lg border border-ink-800 bg-ink-950 p-3.5 space-y-2">
+                  <div className="flex items-center justify-between border-b border-ink-800 pb-1.5">
+                    <span className="font-mono text-xs font-bold text-amber-300">
+                      5000–5999 · DIRECT COGS
+                    </span>
+                    <span className="font-mono text-xs font-bold text-amber-300">
+                      {money(activeReportPnl.directCogs)}
+                    </span>
+                  </div>
+                  {activeReportPnl.coaLineItems
+                    .filter((item) => item.section === "COGS")
+                    .map((item) => (
+                      <div key={item.code} className="flex justify-between text-xs py-0.5">
+                        <span className="text-ink-300">{item.accountName}</span>
+                        <span className="font-mono text-ink-100">{money(item.amount)}</span>
+                      </div>
+                    ))}
+                  <div className="flex justify-between border-t border-ink-800 pt-2 text-xs font-bold">
+                    <span className="text-ink-200">
+                      Gross Profit ({activeReportPnl.grossMarginPct.toFixed(1)}%)
+                    </span>
+                    <span className="font-mono text-court-300">
+                      {money(activeReportPnl.grossProfit)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-ink-800 bg-ink-950 p-3.5 space-y-2">
+                  <div className="flex items-center justify-between border-b border-ink-800 pb-1.5">
+                    <span className="font-mono text-xs font-bold text-bad">
+                      6000–6999 · OPERATING EXPENSES
+                    </span>
+                    <span className="font-mono text-xs font-bold text-bad">
+                      {money(activeReportPnl.operatingExpenses)}
+                    </span>
+                  </div>
+                  {activeReportPnl.coaLineItems
+                    .filter((item) => item.section === "Expense")
+                    .map((item) => (
+                      <div key={item.code} className="flex justify-between text-xs py-0.5">
+                        <span className="text-ink-300">{item.accountName}</span>
+                        <span className="font-mono text-ink-100">{money(item.amount)}</span>
+                      </div>
+                    ))}
+                  <div className="flex justify-between border-t border-ink-800 pt-2 text-xs font-bold">
+                    <span className="text-ink-100">
+                      Net Operating Income ({activeReportPnl.netMarginPct.toFixed(1)}%)
+                    </span>
+                    <span
+                      className={`font-mono ${
+                        activeReportPnl.netOperatingIncome >= 0 ? "text-good" : "text-bad"
+                      }`}
+                    >
+                      {money(activeReportPnl.netOperatingIncome)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </Panel>
+          )}
+
+          {/* 3. Trial Balance & Chart of Accounts Sub-View */}
+          {(reportSubView === "all" || reportSubView === "trial_balance") && (
+            <Panel
+              title="Trial Balance & Chart of Accounts (COA 1000–6999)"
+              meta={`${reportModuleScopeLabel} · ${reportDateRangeLabel} · Double-entry verification across all Asset, Liability, Equity, Revenue, COGS, and Expense accounts`}
+              action={
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 font-mono text-xs font-bold ${
+                    reportTrialBalance.isBalanced
+                      ? "bg-good/15 text-good ring-1 ring-good/30"
+                      : "bg-bad/15 text-bad ring-1 ring-bad/30"
+                  }`}
+                >
+                  <span>{reportTrialBalance.isBalanced ? "✓" : "⚠"}</span>
+                  {reportTrialBalance.isBalanced
+                    ? `Balanced (Debits = Credits = ${money(reportTrialBalance.totalDebits)})`
+                    : `Out of Balance (Debits ${money(reportTrialBalance.totalDebits)} vs Credits ${money(reportTrialBalance.totalCredits)})`}
+                </span>
+              }
+            >
+              <div className="overflow-x-auto">
+                <Table
+                  head={
+                    <>
+                      <Th>ACCOUNT CODE &amp; NAME</Th>
+                      <Th>ACCOUNT CLASS</Th>
+                      <Th>
+                        <span className="block text-right">TOTAL DEBITS ($)</span>
+                      </Th>
+                      <Th>
+                        <span className="block text-right">TOTAL CREDITS ($)</span>
+                      </Th>
+                      <Th>
+                        <span className="block text-right">NET BALANCE ($)</span>
+                      </Th>
+                    </>
+                  }
+                >
+                  {reportTrialBalance.rows.map((row) => (
+                    <Row key={row.code}>
+                      <Td strong>
+                        <span className="font-mono text-xs text-ink-100">{row.label}</span>
+                      </Td>
+                      <Td>
+                        <Chip
+                          tone={
+                            row.category === "Revenue"
+                              ? "good"
+                              : row.category === "COGS" || row.category === "Expense"
+                                ? "warn"
+                                : "neutral"
+                          }
+                        >
+                          {row.category}
+                        </Chip>
+                      </Td>
+                      <Td right>
+                        <span className="font-mono text-xs text-ink-200">
+                          {money(row.debitTotal)}
+                        </span>
+                      </Td>
+                      <Td right>
+                        <span className="font-mono text-xs text-ink-200">
+                          {money(row.creditTotal)}
+                        </span>
+                      </Td>
+                      <Td right>
+                        <span
+                          className={`font-mono text-xs font-semibold ${
+                            row.netBalance > 0
+                              ? "text-court-300"
+                              : row.netBalance < 0
+                                ? "text-bad"
+                                : "text-ink-400"
+                          }`}
+                        >
+                          {money(row.netBalance)}
+                        </span>
+                      </Td>
+                    </Row>
+                  ))}
+                  <Row>
+                    <Td strong>
+                      <span className="font-mono text-xs font-bold uppercase text-ink-100">
+                        TRIAL BALANCE TOTALS
+                      </span>
+                    </Td>
+                    <Td>
+                      <span
+                        className={`inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[10px] font-bold ${
+                          reportTrialBalance.isBalanced
+                            ? "bg-good/15 text-good ring-1 ring-good/30"
+                            : "bg-bad/15 text-bad ring-1 ring-bad/30"
+                        }`}
+                      >
+                        {reportTrialBalance.isBalanced
+                          ? "BALANCED (Debits === Credits)"
+                          : "OUT OF BALANCE"}
+                      </span>
+                    </Td>
+                    <Td right>
+                      <span className="font-mono text-xs font-bold text-court-300">
+                        {money(reportTrialBalance.totalDebits)}
+                      </span>
+                    </Td>
+                    <Td right>
+                      <span className="font-mono text-xs font-bold text-court-300">
+                        {money(reportTrialBalance.totalCredits)}
+                      </span>
+                    </Td>
+                    <Td right>
+                      <span className="font-mono text-xs font-bold text-ink-100">
+                        {money(reportTrialBalance.totalDebits - reportTrialBalance.totalCredits)}
+                      </span>
+                    </Td>
+                  </Row>
+                </Table>
+              </div>
+            </Panel>
+          )}
 
           <div className="grid lg:grid-cols-2 gap-6">
             <Panel
               title="Profit & Loss Statement"
-              meta={`${reportMonth || "All Time"} ${reportBranch ? `(${reportBranch})` : ""}`}
+              meta={`${reportDateRangeLabel} ${reportBranch ? `(${reportBranch})` : ""} · ${reportModuleScopeLabel}`}
             >
               <div className="p-4 space-y-4">
                 <div>
                   <h4 className="text-xs font-mono text-ink-400 mb-2 border-b border-ink-800 pb-1">
-                    REVENUE
+                    GROSS REVENUE (4000–4999)
                   </h4>
-                  {accounts.map((acc) => {
-                    const amt = reportLedger
-                      .filter(
-                        (l) =>
-                          (l.type === "Revenue" || (l.type as string) === "credit") &&
-                          (l.account || l.category || "Other") === acc,
-                      )
-                      .reduce((a, l) => a + Math.abs(l.amount), 0);
-                    if (amt === 0) return null;
-                    return (
-                      <div key={acc} className="flex justify-between text-sm py-1">
-                        <span className="text-ink-200">{acc}</span>
-                        <span className="text-court-400">{money(amt)}</span>
+                  {activeReportPnl.coaLineItems
+                    .filter((item) => item.section === "Revenue" && Math.abs(item.amount) > 0)
+                    .map((item) => (
+                      <div key={item.code} className="flex justify-between text-sm py-1">
+                        <span className="text-ink-200">{item.accountName}</span>
+                        <span className="text-court-400 font-mono">{money(item.amount)}</span>
                       </div>
-                    );
-                  })}
+                    ))}
                   <div className="flex justify-between text-sm font-bold py-2 mt-2 border-t border-ink-800">
-                    <span>Total Revenue</span>
-                    <span className="text-court-400">{money(reportRevenue)}</span>
+                    <span>Total Gross Revenue</span>
+                    <span className="text-court-400 font-mono">
+                      {money(activeReportPnl.grossRevenue)}
+                    </span>
                   </div>
                 </div>
 
                 <div>
                   <h4 className="text-xs font-mono text-ink-400 mb-2 border-b border-ink-800 pb-1">
-                    EXPENSES
+                    DIRECT COGS &amp; COMMISSIONS (5000–5999)
                   </h4>
-                  {accounts.map((acc) => {
-                    const amt = reportLedger
-                      .filter(
-                        (l) =>
-                          (l.type === "Expense" || (l.type as string) === "debit") &&
-                          (l.account || l.category || "Other") === acc,
-                      )
-                      .reduce((a, l) => a + Math.abs(l.amount), 0);
-                    if (amt === 0) return null;
-                    return (
-                      <div key={acc} className="flex justify-between text-sm py-1">
-                        <span className="text-ink-200">{acc}</span>
-                        <span className="text-bad">{money(amt)}</span>
+                  {activeReportPnl.coaLineItems
+                    .filter((item) => item.section === "COGS" && Math.abs(item.amount) > 0)
+                    .map((item) => (
+                      <div key={item.code} className="flex justify-between text-sm py-1">
+                        <span className="text-ink-200">{item.accountName}</span>
+                        <span className="text-warn font-mono">{money(item.amount)}</span>
                       </div>
-                    );
-                  })}
+                    ))}
+                  <div className="flex justify-between text-sm font-bold py-2 mt-2 border-t border-ink-800">
+                    <span>Total Direct COGS</span>
+                    <span className="text-warn font-mono">{money(activeReportPnl.directCogs)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm font-bold py-2 border-t border-ink-800/60">
+                    <span>Gross Profit ({activeReportPnl.grossMarginPct.toFixed(1)}% Margin)</span>
+                    <span className="text-court-300 font-mono">
+                      {money(activeReportPnl.grossProfit)}
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="text-xs font-mono text-ink-400 mb-2 border-b border-ink-800 pb-1">
+                    OPERATING EXPENSES (6000–6999)
+                  </h4>
+                  {activeReportPnl.coaLineItems
+                    .filter((item) => item.section === "Expense" && Math.abs(item.amount) > 0)
+                    .map((item) => (
+                      <div key={item.code} className="flex justify-between text-sm py-1">
+                        <span className="text-ink-200">{item.accountName}</span>
+                        <span className="text-bad font-mono">{money(item.amount)}</span>
+                      </div>
+                    ))}
                   {(() => {
                     const targetBranches = reportBranch
                       ? (db.branches || []).filter((b) => b.name === reportBranch)
@@ -2440,15 +3474,21 @@ function AccountingPage() {
                     );
                   })()}
                   <div className="flex justify-between text-sm font-bold py-2 mt-2 border-t border-ink-800">
-                    <span>Total Ledger Expenses</span>
-                    <span className="text-bad">{money(reportExpense)}</span>
+                    <span>Total Operating Expenses</span>
+                    <span className="text-bad font-mono">
+                      {money(activeReportPnl.operatingExpenses)}
+                    </span>
                   </div>
                 </div>
 
                 <div className="flex justify-between text-base font-bold py-3 mt-4 border-t-2 border-ink-700">
-                  <span>NET INCOME</span>
-                  <span className={reportRevenue - reportExpense >= 0 ? "text-good" : "text-bad"}>
-                    {money(reportRevenue - reportExpense)}
+                  <span>
+                    NET OPERATING INCOME ({activeReportPnl.netMarginPct.toFixed(1)}% Margin)
+                  </span>
+                  <span
+                    className={activeReportPnl.netOperatingIncome >= 0 ? "text-good" : "text-bad"}
+                  >
+                    {money(activeReportPnl.netOperatingIncome)}
                   </span>
                 </div>
               </div>
@@ -2527,7 +3567,7 @@ function AccountingPage() {
                                   (inv.status === "pending" || inv.status === "overdue"),
                               );
 
-                              const newEntry: LedgerEntry = {
+                              const newEntry: LedgerEntry = normalizeDoubleEntryLedger({
                                 id: `l-${Date.now().toString(36)}`,
                                 date: todayIso,
                                 description: `Tuition & Fee Collection - ${p.name}`,
@@ -2535,10 +3575,11 @@ function AccountingPage() {
                                 type: "Revenue",
                                 account: "Tuition",
                                 branch: p.branch,
+                                module: "academy",
                                 amount: payAmount,
                                 status: "Collected",
                                 referenceId: unpaidInvoices[0]?.id,
-                              };
+                              });
                               await setEntity("ledger", newEntry);
                               await patchEntity("players", p.id, { balance: 0 });
                               for (const inv of unpaidInvoices) {
@@ -2628,7 +3669,7 @@ function AccountingPage() {
               <div className="space-y-6">
                 <Panel
                   title="Branch Revenue & Court Utilization Analytics (Full Court vs. HCA / HCB)"
-                  meta={`${reportMonth || "All Time"} · Per-court Full vs. Half-Court (HCA / HCB) utilization, session rental costs, and branch operating margin`}
+                  meta={`${reportDateRangeLabel} · Per-court Full vs. Half-Court (HCA / HCB) utilization, session rental costs, and branch operating margin`}
                 >
                   <Table
                     head={
@@ -2717,7 +3758,7 @@ function AccountingPage() {
                 {/* Level B: Team Monthly Operating Cost / Profitability Report */}
                 <Panel
                   title="Team Monthly Operating Cost / Profitability Report"
-                  meta={`${reportMonth || "All Time"} · Propagated Full Court & Half-Court (HCA / HCB) rental fees + coach payroll vs. team tuition`}
+                  meta={`${reportDateRangeLabel} · Propagated Full Court & Half-Court (HCA / HCB) rental fees + coach payroll vs. team tuition`}
                 >
                   <Table
                     head={
@@ -2813,9 +3854,34 @@ function AccountingPage() {
       {activeTab === "ledger" && (
         <Panel
           title="Ledger"
-          meta="Every revenue and expense line"
+          meta="Normalized Double-Entry General Ledger across all modules"
           action={
-            <>
+            <div className="flex flex-wrap items-center gap-2">
+              {!isBranchScoped && (
+                <FilterSelect
+                  label="Branch"
+                  value={ledgerBranchFilter}
+                  onChange={setLedgerBranchFilter}
+                  options={["", ...db.branches.map((b) => b.name)]}
+                />
+              )}
+              <div className="flex items-center gap-1.5">
+                <span className="font-mono text-[10px] uppercase tracking-wider text-ink-400">
+                  Module
+                </span>
+                <select
+                  aria-label="Module / Cost Center"
+                  value={ledgerModuleFilter}
+                  onChange={(e) => setLedgerModuleFilter(e.target.value as "" | LedgerModule)}
+                  className="h-9 rounded-lg border border-ink-750 bg-ink-900 px-2.5 text-xs text-ink-100"
+                >
+                  {REPORT_MODULE_FILTER_OPTIONS.map((opt) => (
+                    <option key={opt.value || "all"} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <FilterSelect
                 label="Type"
                 value={type}
@@ -2847,25 +3913,30 @@ function AccountingPage() {
                   + New entry
                 </Button>
               )}
-            </>
+            </div>
           }
         >
           <div className="border-b border-ink-800 px-4 py-3">
             <Search value={q} onChange={setQ} placeholder="Search ledger entries…" />
           </div>
-          {/* Virtualized Ledger Table */}
+          {/* Virtualized Double-Entry General Ledger Table */}
           <div className="overflow-x-auto w-full -mx-4 px-4 sm:mx-0 sm:px-0">
             <VirtualTable
               data={pagedLedger}
-              colSpan={5}
+              colSpan={8}
               head={
                 <>
                   <Th>DATE</Th>
-                  <Th>ENTRY</Th>
-                  <Th hide>ACCOUNT</Th>
-                  <Th hide>STATUS</Th>
+                  <Th>MODULE</Th>
+                  <Th>DESCRIPTION / REFERENCE</Th>
+                  <Th>DEBIT ACCOUNT</Th>
+                  <Th>CREDIT ACCOUNT</Th>
+                  <Th>CURRENCY</Th>
                   <Th>
-                    <span className="block text-right">AMOUNT</span>
+                    <span className="block text-right">AMOUNT (USD)</span>
+                  </Th>
+                  <Th>
+                    <span className="block text-right">RUNNING BALANCE</span>
                   </Th>
                 </>
               }
@@ -2878,133 +3949,178 @@ function AccountingPage() {
                 />
               }
               emptyState={<EmptyState>No ledger entries match these filters.</EmptyState>}
-              renderRow={(l) => (
-                <>
-                  <Td>
-                    <span className="font-mono text-xs text-ink-300">{l.date}</span>
-                  </Td>
-                  <Td strong>
-                    <div className="flex flex-col gap-0.5">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span>{l.entry}</span>
-                        {(l.isAdvance || l.entry?.includes("Custom / Advance Payment")) && (
-                          <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-2 py-0.5 font-mono text-[10px] font-semibold text-amber-300 ring-1 ring-amber-500/30">
-                            ⚡ Custom / Advance Payment (On Account)
-                            {l.linkedAdvanceSessionsCount
-                              ? ` · Validated ${l.linkedAdvanceSessionsCount} sess`
-                              : ""}
-                          </span>
-                        )}
-                        {l.attachment && (
-                          <a
-                            href={l.attachment}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-court-400 hover:text-court-300"
-                            title="View Receipt"
-                          >
-                            <svg
-                              width="14"
-                              height="14"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
+              renderRow={(l) => {
+                const modMeta = MODULE_BADGE_META[l.module] || MODULE_BADGE_META.general;
+                const runningBal = runningBalanceById.get(l.id) ?? 0;
+                return (
+                  <>
+                    <Td>
+                      <span className="font-mono text-xs text-ink-300">{l.date}</span>
+                    </Td>
+                    <Td>
+                      <span
+                        className={`inline-flex items-center rounded-md px-2 py-0.5 font-mono text-[10px] font-semibold ${modMeta.badgeClass}`}
+                      >
+                        {modMeta.label}
+                      </span>
+                    </Td>
+                    <Td strong>
+                      <div className="flex flex-col gap-0.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span>{l.entry || l.description}</span>
+                          <Chip tone={l.status === "Pending" ? "warn" : "good"}>
+                            {l.status.toUpperCase()}
+                          </Chip>
+                          {(l.isAdvance || l.entry?.includes("Custom / Advance Payment")) && (
+                            <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-2 py-0.5 font-mono text-[10px] font-semibold text-amber-300 ring-1 ring-amber-500/30">
+                              ⚡ Custom / Advance Payment (On Account)
+                              {l.linkedAdvanceSessionsCount
+                                ? ` · Validated ${l.linkedAdvanceSessionsCount} sess`
+                                : ""}
+                            </span>
+                          )}
+                          {l.attachment && (
+                            <a
+                              href={l.attachment}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-court-400 hover:text-court-300"
+                              title="View Receipt"
                             >
-                              <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-                            </svg>
-                          </a>
-                        )}
+                              <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                              </svg>
+                            </a>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 text-[10px] font-mono text-ink-400 font-normal">
+                          {l.branch && <span>Branch: {l.branch}</span>}
+                          {l.referenceId && <span>Ref: {l.referenceId}</span>}
+                          {(l.note || l.advanceReason) && (
+                            <span>
+                              {l.note}
+                              {l.advanceReason && !l.note?.includes(l.advanceReason)
+                                ? ` · Advance Reason: ${l.advanceReason}`
+                                : ""}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      {(l.note || l.advanceReason) && (
-                        <span className="text-[10px] font-mono text-ink-400 font-normal">
-                          {l.note}
-                          {l.advanceReason && !l.note?.includes(l.advanceReason)
-                            ? ` · Advance Reason: ${l.advanceReason}`
-                            : ""}
+                    </Td>
+                    <Td>
+                      <span className="font-mono text-[11px] text-ink-200">{l.debitAccount}</span>
+                    </Td>
+                    <Td>
+                      <span className="font-mono text-[11px] text-ink-200">{l.creditAccount}</span>
+                    </Td>
+                    <Td>
+                      {l.currency === "LBP" ? (
+                        <div
+                          className="flex flex-col"
+                          title={`${l.originalAmount.toLocaleString()} L.L. @ ${l.exchangeRate.toLocaleString()} L.L./USD`}
+                        >
+                          <span className="inline-flex w-fit items-center rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-amber-300 ring-1 ring-amber-500/30">
+                            LBP
+                          </span>
+                          <span className="font-mono text-[10px] text-ink-400 mt-0.5">
+                            {l.originalAmount.toLocaleString()} L.L. @{" "}
+                            {l.exchangeRate.toLocaleString()}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="inline-flex items-center rounded bg-ink-800 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-ink-200">
+                          USD
                         </span>
                       )}
-                    </div>
-                  </Td>
-                  <Td hide>
-                    <Chip>{l.account}</Chip>
-                  </Td>
-                  <Td hide>
-                    <Chip tone={l.status === "Pending" ? "warn" : "good"}>
-                      {l.status.toUpperCase()}
-                    </Chip>
-                  </Td>
-                  <Td right>
-                    <div className="flex items-center justify-end gap-2">
-                      <span
-                        className={`font-mono text-xs ${
-                          l.type === "Expense" ? "text-bad" : "text-court-400"
-                        }`}
-                      >
-                        {l.type === "Expense"
-                          ? `-${money(Math.abs(l.amount))}`
-                          : money(Math.abs(l.amount))}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        {(currentUser?.role === "Super Admin" ||
-                          currentUser?.role === "Academy Manager" ||
-                          currentUser?.role === "Accountant") &&
-                          l.status === "Pending" && (
+                    </Td>
+                    <Td right>
+                      <div className="flex items-center justify-end gap-2">
+                        <span
+                          className={`font-mono text-xs font-semibold ${
+                            l.type === "Expense" ? "text-bad" : "text-court-400"
+                          }`}
+                        >
+                          {l.type === "Expense"
+                            ? `-${kitMoney(Math.abs(l.amount))}`
+                            : kitMoney(Math.abs(l.amount))}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          {(currentUser?.role === "Super Admin" ||
+                            currentUser?.role === "Academy Manager" ||
+                            currentUser?.role === "Accountant") &&
+                            l.status === "Pending" && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void patchEntity("ledger", l.id, { status: "Paid" });
+                                  void createAcademyNotification(tenantId, {
+                                    title: `Branch Expense Approved: ${l.branch || "Academy"}`,
+                                    message: `Expense "${l.entry}" of ${money(Math.abs(l.amount))} (${l.account}) has been approved and marked Paid.`,
+                                    type: "billing",
+                                    targetRoles: ["branch_manager"],
+                                    targetBranchId: l.branch || undefined,
+                                    actionUrl: "/branches",
+                                    createdAt: new Date().toISOString(),
+                                    readBy: [],
+                                    dismissedBy: [],
+                                  }).catch(() => {});
+                                }}
+                                className="text-[10px] font-mono bg-good/15 text-good px-2 py-1 rounded hover:bg-good/25 transition-colors"
+                              >
+                                APPROVE
+                              </button>
+                            )}
+                          {canEditLedgerEntry(l) && (
                             <button
                               type="button"
                               onClick={() => {
-                                void patchEntity("ledger", l.id, { status: "Paid" });
-                                void createAcademyNotification(tenantId, {
-                                  title: `Branch Expense Approved: ${l.branch || "Academy"}`,
-                                  message: `Expense "${l.entry}" of ${money(Math.abs(l.amount))} (${l.account}) has been approved and marked Paid.`,
-                                  type: "billing",
-                                  targetRoles: ["branch_manager"],
-                                  targetBranchId: l.branch || undefined,
-                                  actionUrl: "/branches",
-                                  createdAt: new Date().toISOString(),
-                                  readBy: [],
-                                  dismissedBy: [],
-                                }).catch(() => {});
+                                setEditing(l);
+                                const { id: _id, ...rest } = l;
+                                setForm({
+                                  ...rest,
+                                  amount: Math.abs(rest.amount),
+                                  paymentMethod: rest.paymentMethod || "Cash",
+                                });
+                                setOpen(true);
                               }}
-                              className="text-[10px] font-mono bg-good/15 text-good px-2 py-1 rounded hover:bg-good/25 transition-colors"
+                              className="rounded bg-ink-850 px-2 py-1 font-mono text-[10px] text-ink-200 ring-1 ring-ink-700 hover:bg-ink-800 hover:text-court-300 transition-colors"
                             >
-                              APPROVE
+                              Edit
                             </button>
                           )}
-                        {canEditLedgerEntry(l) && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditing(l);
-                              const { id: _id, ...rest } = l;
-                              setForm({
-                                ...rest,
-                                amount: Math.abs(rest.amount),
-                                paymentMethod: rest.paymentMethod || "Cash",
-                              });
-                              setOpen(true);
-                            }}
-                            className="rounded bg-ink-850 px-2 py-1 font-mono text-[10px] text-ink-200 ring-1 ring-ink-700 hover:bg-ink-800 hover:text-court-300 transition-colors"
-                          >
-                            Edit
-                          </button>
-                        )}
-                        {canDeleteLedgerEntry(l) && (
-                          <button
-                            type="button"
-                            onClick={() => setDeletingLedgerEntry(l)}
-                            className="rounded bg-bad/15 px-2 py-1 font-mono text-[10px] text-bad ring-1 ring-bad/30 hover:bg-bad/25 transition-colors"
-                          >
-                            Undo / Delete
-                          </button>
-                        )}
+                          {canDeleteLedgerEntry(l) && (
+                            <button
+                              type="button"
+                              onClick={() => setDeletingLedgerEntry(l)}
+                              className="rounded bg-bad/15 px-2 py-1 font-mono text-[10px] text-bad ring-1 ring-bad/30 hover:bg-bad/25 transition-colors"
+                            >
+                              Undo / Delete
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </Td>
-                </>
-              )}
+                    </Td>
+                    <Td right>
+                      <span
+                        className={`font-mono text-xs font-bold ${
+                          runningBal >= 0 ? "text-ink-200" : "text-bad"
+                        }`}
+                      >
+                        {kitMoney(runningBal)}
+                      </span>
+                    </Td>
+                  </>
+                );
+              }}
             />
           </div>
 
