@@ -419,7 +419,7 @@ export async function atomicUpdateItem(
       : id;
   const docRef = doc(firestore, "tenants", tenantId, collectionName, docId);
   try {
-    await updateDoc(docRef, sanitizeForFirestore(data, true));
+    await setDoc(docRef, sanitizeForFirestore(data, true), { merge: true });
   } catch (err) {
     logSystemError({
       source: "firestore_write",

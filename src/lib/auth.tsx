@@ -332,12 +332,74 @@ function resolveStoredOrDefaultE2EUser(): UserAccount {
   return DEFAULT_E2E_BYPASS_USER;
 }
 
+export function isRbaDemoSandboxActive(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return (
+      getTenantSlug() === "rba-demo" && window.localStorage.getItem("vv_rba_demo_active") === "true"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function resolveRbaDemoSessionUser(): UserAccount | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw =
+      window.localStorage.getItem("vv_auth_session_user") ||
+      window.sessionStorage.getItem("vv_auth_session_user");
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<UserAccount> & { tenantId?: string };
+      if (parsed && (parsed.email || parsed.id)) {
+        const role = normalizeUiRole(parsed.role || "Super Admin");
+        return {
+          ...DEFAULT_E2E_BYPASS_USER,
+          ...parsed,
+          role,
+          branch: parsed.branch || "All",
+          branchScope: parsed.branchScope || "All branches",
+          active: true,
+          method: "Password",
+        };
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [passwordUser, setPasswordUser] = useState<UserAccount | null>(() =>
-    isE2EBypassEnabled() ? resolveStoredOrDefaultE2EUser() : null,
+  const [passwordUser, setPasswordUser] = useState<UserAccount | null>(() => {
+    if (isRbaDemoSandboxActive()) {
+      return resolveRbaDemoSessionUser() || resolveStoredOrDefaultE2EUser();
+    }
+    return isE2EBypassEnabled() ? resolveStoredOrDefaultE2EUser() : null;
+  });
+  const [loading, setLoading] = useState<boolean>(
+    () => !(isE2EBypassEnabled() || isRbaDemoSandboxActive()),
   );
-  const [loading, setLoading] = useState<boolean>(() => !isE2EBypassEnabled());
+
+  // Listen for instant role/branch switches from the RBA Demo Launcher & Control Bar
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleRbaAuthChange = () => {
+      if (isRbaDemoSandboxActive()) {
+        const demoUser = resolveRbaDemoSessionUser();
+        if (demoUser) {
+          setPasswordUser(demoUser);
+          setLoading(false);
+        }
+      } else if (isE2EBypassEnabled()) {
+        setPasswordUser(resolveStoredOrDefaultE2EUser());
+        setLoading(false);
+      }
+    };
+    window.addEventListener("vv:rba-demo-auth-change", handleRbaAuthChange);
+    return () => window.removeEventListener("vv:rba-demo-auth-change", handleRbaAuthChange);
+  }, []);
 
   // Security Hardening: Restore persisted session on client mount after hydration,
   // clean up legacy keys, and handle explicit lock requests (?lock=1 or ?signout=1)
@@ -381,6 +443,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 parsed.name = "Georges Khoury";
               }
               setPasswordUser(parsed);
+              if (isRbaDemoSandboxActive()) {
+                setLoading(false);
+              }
             }
           } catch {
             // ignore
@@ -407,6 +472,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       const tenantId = getTenantSlug();
 
+      if (isRbaDemoSandboxActive()) {
+        const demoUser = resolveRbaDemoSessionUser();
+        if (demoUser) {
+          setPasswordUser(demoUser);
+          setUser(currentUser && !currentUser.isAnonymous ? currentUser : null);
+          setLoading(false);
+          return;
+        }
+      }
+
       if (!currentUser) {
         if (isE2EBypassEnabled()) {
           const e2eUser = resolveStoredOrDefaultE2EUser();
@@ -416,6 +491,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         if (typeof window !== "undefined") {
           window.localStorage.removeItem("vv_auth_session_user");
+          window.sessionStorage.setItem("vv_auth_session_user", "");
           window.sessionStorage.removeItem("vv_auth_session_user");
         }
         setPasswordUser(null);

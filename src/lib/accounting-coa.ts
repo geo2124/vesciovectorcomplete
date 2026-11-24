@@ -546,6 +546,13 @@ export type NormalizedLedgerEntry = LedgerEntry & {
   exchangeRate: number;
 };
 
+export function roundToCents(value: number): number {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  const sign = num < 0 ? -1 : 1;
+  return (sign * Math.round((Math.abs(num) + Number.EPSILON) * 100)) / 100;
+}
+
 /**
  * Normalizes any new or legacy LedgerEntry into a complete double-entry record
  * with guaranteed `module`, `debitAccount`, `creditAccount`, `currency`,
@@ -570,13 +577,17 @@ export function normalizeDoubleEntryLedger(entry: LedgerEntry): NormalizedLedger
 
   if (currency === "LBP" && exchangeRate > 1) {
     if (hasExplicitOriginal && (usdAmount === 0 || usdAmount === originalAmount)) {
-      usdAmount = Number((originalAmount / exchangeRate).toFixed(2));
+      usdAmount = roundToCents(originalAmount / exchangeRate);
     } else if (!hasExplicitOriginal && usdAmount > 0) {
+      usdAmount = roundToCents(usdAmount);
       originalAmount = Math.round(usdAmount * exchangeRate);
+    } else {
+      usdAmount = roundToCents(usdAmount);
+      originalAmount = Math.round(originalAmount);
     }
   } else {
-    usdAmount = Number(usdAmount.toFixed(2));
-    originalAmount = hasExplicitOriginal ? Number(originalAmount.toFixed(2)) : usdAmount;
+    usdAmount = roundToCents(usdAmount);
+    originalAmount = hasExplicitOriginal ? roundToCents(originalAmount) : usdAmount;
   }
 
   const isRevenueType = entry.type === "Revenue" || entry.type === "credit";
@@ -608,6 +619,60 @@ export function normalizeDoubleEntryLedger(entry: LedgerEntry): NormalizedLedger
     originalAmount,
     exchangeRate,
   };
+}
+
+/**
+ * Generates a deterministic idempotency signature for a normalized ledger entry
+ * when `referenceId` is present, preventing double-click duplicate postings.
+ */
+export function getLedgerIdempotencyKey(entry: LedgerEntry): string {
+  const norm = normalizeDoubleEntryLedger(entry);
+  const cleanId = (norm.id || "").trim();
+  const cleanRef = (norm.referenceId || "").trim();
+  if (cleanRef) {
+    const amountCents = Math.round((Math.abs(norm.amount) + Number.EPSILON) * 100);
+    return `ref:${cleanRef}::${norm.module}::${norm.debitAccount}::${norm.creditAccount}::${norm.type}::${amountCents}::${norm.date}`;
+  }
+  return `id:${cleanId}`;
+}
+
+/**
+ * Deduplicates an array of LedgerEntry items against both duplicate `id`s and
+ * duplicate `referenceId` double-click submissions, returning normalized entries.
+ */
+export function deduplicateLedgerEntries(entries: LedgerEntry[]): NormalizedLedgerEntry[] {
+  const seenIds = new Set<string>();
+  const seenIdempotencyKeys = new Set<string>();
+  const result: NormalizedLedgerEntry[] = [];
+
+  for (const raw of entries) {
+    if (!raw || typeof raw !== "object") continue;
+    const norm = normalizeDoubleEntryLedger(raw);
+    const idKey = (norm.id || "").trim();
+    if (idKey && seenIds.has(idKey)) {
+      continue;
+    }
+    const idempotencyKey = getLedgerIdempotencyKey(norm);
+    if (seenIdempotencyKeys.has(idempotencyKey)) {
+      continue;
+    }
+    if (idKey) seenIds.add(idKey);
+    seenIdempotencyKeys.add(idempotencyKey);
+    result.push(norm);
+  }
+
+  return result;
+}
+
+/**
+ * Appends a candidate ledger entry to an existing ledger slice only if neither its `id`
+ * nor its deterministic `referenceId` idempotency signature already exists.
+ */
+export function appendIdempotentLedgerEntry(
+  existingEntries: LedgerEntry[],
+  candidateEntry: LedgerEntry,
+): NormalizedLedgerEntry[] {
+  return deduplicateLedgerEntries([...existingEntries, candidateEntry]);
 }
 
 export interface TrialBalanceRow {
@@ -652,7 +717,10 @@ function matchCoaAccount(accountLabelOrCode: string): ChartOfAccountItem {
  * Every entry posts an equal Debit and Credit of `normalized.amount` (USD equivalent),
  * guaranteeing `totalDebits === totalCredits` and `isBalanced === true`.
  */
-export function computeTrialBalance(entries: LedgerEntry[]): TrialBalanceResult {
+export function computeTrialBalance(
+  entries: LedgerEntry[],
+  options?: { currency?: "USD" | "LBP"; module?: LedgerModule },
+): TrialBalanceResult {
   const accumulator = new Map<
     string,
     {
@@ -675,9 +743,13 @@ export function computeTrialBalance(entries: LedgerEntry[]): TrialBalanceResult 
   let totalDebitCents = 0;
   let totalCreditCents = 0;
 
-  for (const rawEntry of entries) {
-    const norm = normalizeDoubleEntryLedger(rawEntry);
-    const amountCents = Math.round(Math.abs(Number(norm.amount) || 0) * 100);
+  const deduplicated = deduplicateLedgerEntries(entries);
+
+  for (const norm of deduplicated) {
+    if (options?.currency && norm.currency !== options.currency) continue;
+    if (options?.module && norm.module !== options.module) continue;
+
+    const amountCents = Math.round((Math.abs(Number(norm.amount) || 0) + Number.EPSILON) * 100);
     if (amountCents === 0) continue;
 
     const debitCoa = matchCoaAccount(norm.debitAccount);
@@ -725,5 +797,105 @@ export function computeTrialBalance(entries: LedgerEntry[]): TrialBalanceResult 
     totalDebits,
     totalCredits,
     isBalanced: totalDebitCents === totalCreditCents,
+  };
+}
+
+export interface PnlStatementMetrics {
+  grossRevenue: number;
+  directCogs: number;
+  grossProfit: number;
+  operatingExpenses: number;
+  netOperatingIncome: number;
+  entryCount: number;
+}
+
+/**
+ * Computes integer-cent accurate P&L metrics from a list of LedgerEntry items,
+ * with optional module and currency isolation filters.
+ */
+export function computePnlMetrics(
+  entries: LedgerEntry[],
+  options?: { currency?: "USD" | "LBP"; module?: LedgerModule; includePending?: boolean },
+): PnlStatementMetrics {
+  const deduplicated = deduplicateLedgerEntries(entries);
+
+  let grossRevenueCents = 0;
+  let directCogsCents = 0;
+  let operatingExpensesCents = 0;
+  let entryCount = 0;
+
+  for (const norm of deduplicated) {
+    if (!options?.includePending && norm.status === "Pending") continue;
+    if (options?.currency && norm.currency !== options.currency) continue;
+    if (options?.module && norm.module !== options.module) continue;
+
+    const amountCents = Math.round((Math.abs(Number(norm.amount) || 0) + Number.EPSILON) * 100);
+    if (amountCents === 0) continue;
+
+    entryCount += 1;
+    const debitCoa = matchCoaAccount(norm.debitAccount);
+    const creditCoa = matchCoaAccount(norm.creditAccount);
+
+    if (creditCoa.category === "Revenue") {
+      grossRevenueCents += amountCents;
+    } else if (creditCoa.category === "COGS") {
+      directCogsCents -= amountCents;
+    } else if (creditCoa.category === "Expense") {
+      operatingExpensesCents -= amountCents;
+    }
+
+    if (debitCoa.category === "Revenue") {
+      grossRevenueCents -= amountCents;
+    } else if (debitCoa.category === "COGS") {
+      directCogsCents += amountCents;
+    } else if (debitCoa.category === "Expense") {
+      operatingExpensesCents += amountCents;
+    }
+  }
+
+  const grossProfitCents = grossRevenueCents - directCogsCents;
+  const netOperatingIncomeCents = grossProfitCents - operatingExpensesCents;
+
+  return {
+    grossRevenue: Number((grossRevenueCents / 100).toFixed(2)),
+    directCogs: Number((directCogsCents / 100).toFixed(2)),
+    grossProfit: Number((grossProfitCents / 100).toFixed(2)),
+    operatingExpenses: Number((operatingExpensesCents / 100).toFixed(2)),
+    netOperatingIncome: Number((netOperatingIncomeCents / 100).toFixed(2)),
+    entryCount,
+  };
+}
+
+export type MultiVerticalPnlMatrix = Record<LedgerModule, PnlStatementMetrics> & {
+  consolidated: PnlStatementMetrics;
+};
+
+/**
+ * Computes the complete per-module P&L matrix across all 8 modules (`academy`, `courts`,
+ * `gym`, `physio`, `pos`, `merchandise`, `crm`, `general`) alongside the `consolidated` total.
+ */
+export function computeMultiVerticalPnlMatrix(
+  entries: LedgerEntry[],
+  options?: { currency?: "USD" | "LBP"; includePending?: boolean },
+): MultiVerticalPnlMatrix {
+  const modules: LedgerModule[] = [
+    "academy",
+    "courts",
+    "gym",
+    "physio",
+    "pos",
+    "merchandise",
+    "crm",
+    "general",
+  ];
+
+  const matrix = {} as Record<LedgerModule, PnlStatementMetrics>;
+  for (const mod of modules) {
+    matrix[mod] = computePnlMetrics(entries, { ...options, module: mod });
+  }
+
+  return {
+    ...matrix,
+    consolidated: computePnlMetrics(entries, options),
   };
 }

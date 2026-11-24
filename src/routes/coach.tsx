@@ -1049,7 +1049,7 @@ function Home({
   onOpenSchedulePractice?: () => void;
   onOpenWorkshops?: () => void;
 }) {
-  const { db, recordAttendance, patchEntity, dispatchNotification } = useDB();
+  const { db, recordAttendance, setEntity, patchEntity, dispatchNotification } = useDB();
   const currentUser = useTenantUser();
   const [openSession, setOpenSession] = useState<string | null>(activeSessionId ?? null);
 
@@ -1063,7 +1063,12 @@ function Home({
 
   const confirmWorkshopAttendance = (w: Workshop) => {
     const nextAttendees = Array.from(new Set([...(w.attendeeIds || []), coachId]));
-    patchEntity("workshops", w.id, { attendeeIds: nextAttendees });
+    const updatedWorkshop: Workshop = {
+      ...w,
+      attendeeIds: nextAttendees,
+      attendance: { ...(w.attendance || {}), [coachId]: "Present" },
+    };
+    void setEntity("workshops", updatedWorkshop);
     toast.success(`Attendance confirmed for "${w.title}".`);
   };
 
@@ -3230,7 +3235,12 @@ function Docs({ coachId }: { coachId: string }) {
 
   const handleConfirmWorkshopAttendance = (w: Workshop) => {
     const nextAttendees = Array.from(new Set([...(w.attendeeIds || []), coach.id]));
-    patchEntity("workshops", w.id, { attendeeIds: nextAttendees });
+    const updatedWorkshop: Workshop = {
+      ...w,
+      attendeeIds: nextAttendees,
+      attendance: { ...(w.attendance || {}), [coach.id]: "Present" },
+    };
+    void setEntity("workshops", updatedWorkshop);
     toast.success(`Attendance confirmed for "${w.title}".`);
   };
 

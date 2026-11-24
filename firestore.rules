@@ -400,7 +400,10 @@ service cloud.firestore {
       // Branches, Teams, Players, Coaches
       match /branches/{branchId} {
         allow read: if isTenantMember(tenantId);
-        allow write: if canManageOperations(tenantId);
+        allow write: if isTenantAdmin(tenantId) || canManageStaff(tenantId) || (
+          isSignedIn() && isUserActive(tenantId) &&
+          hasTenantRole(tenantId, ['STAFF', 'Staff', 'staff'])
+        );
       }
       match /teams/{teamId} {
         allow read: if isTenantMember(tenantId);

@@ -3484,15 +3484,17 @@ export function ensureCollectionSubscribed(key: keyof DB, tenantId: string) {
   }
 
   // Gate sensitive collections by signed-in user role/permissions so unauthorized roles
-  // do not preload or retain restricted records in client state.
+  // do not preload or retain restricted records in client state (skip destructive cache wipe in rba-demo sandbox).
   if (SENSITIVE_ROLE_GATED_COLLECTIONS.has(key as CollectionKey) && !canUserAccessCollection(key)) {
     if (dbStore.isSubscribed(key)) {
       dbStore.unregisterSubscription(key);
     }
     dbStore.markHydrated(key);
-    const prevRestricted = dbStore.getSlice(key);
-    if (Array.isArray(prevRestricted) && prevRestricted.length > 0) {
-      dbStore.setSlice(key, [] as unknown as DB[typeof key]);
+    if (tenantId !== "rba-demo") {
+      const prevRestricted = dbStore.getSlice(key);
+      if (Array.isArray(prevRestricted) && prevRestricted.length > 0) {
+        dbStore.setSlice(key, [] as unknown as DB[typeof key]);
+      }
     }
     return;
   }
@@ -3532,7 +3534,14 @@ export function ensureCollectionSubscribed(key: keyof DB, tenantId: string) {
         dbStore.markHydrated("attendance");
         dbStore.markHydrated("attendanceMeta");
         const prevAtt = dbStore.getSlice("attendance");
-        if (!isSliceStructurallyEqual(prevAtt, att)) {
+        const preserveRbaSeededAtt =
+          tenantId === "rba-demo" &&
+          snapshot.empty &&
+          typeof window !== "undefined" &&
+          window.localStorage.getItem("vv_rba_demo_seeded") === "true" &&
+          prevAtt &&
+          Object.keys(prevAtt).length > 0;
+        if (!preserveRbaSeededAtt && !isSliceStructurallyEqual(prevAtt, att)) {
           dbStore.setSlice("attendance", att);
         }
         const mergedMeta = {
@@ -3687,7 +3696,14 @@ export function ensureCollectionSubscribed(key: keyof DB, tenantId: string) {
       }
 
       const prevSlice = dbStore.getSlice(key);
-      if (!isSliceStructurallyEqual(prevSlice, items)) {
+      const preserveRbaSeededSlice =
+        tenantId === "rba-demo" &&
+        snapshot.empty &&
+        typeof window !== "undefined" &&
+        window.localStorage.getItem("vv_rba_demo_seeded") === "true" &&
+        Array.isArray(prevSlice) &&
+        prevSlice.length > 0;
+      if (!preserveRbaSeededSlice && !isSliceStructurallyEqual(prevSlice, items)) {
         dbStore.setSlice(key, items as unknown as DB[typeof key]);
       }
     },
@@ -3768,6 +3784,18 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const { user, passwordUser, loading: authLoading } = useAuth();
   const queryClient = useQueryClient();
   const [ready, setReady] = useState(false);
+  const [, setTenantChangeTick] = useState(0);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onTenantChange = () => {
+      const nextSlug = getTenantSlug() || "donbosco";
+      dbStore.hydrateFromLocalCache(nextSlug);
+      setTenantChangeTick((t) => t + 1);
+    };
+    window.addEventListener("vv:rba-demo-tenant-change", onTenantChange);
+    return () => window.removeEventListener("vv:rba-demo-tenant-change", onTenantChange);
+  }, []);
 
   const tenantId = getTenantSlug() || "donbosco";
   const authUid = user?.uid || auth?.currentUser?.uid || null;
@@ -3814,21 +3842,23 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // Bind queryClient to reactive store for cache sync & initialize global error flight recorder
   useEffect(() => {
     dbStore.hydrateFromLocalCache(tenantId);
-    for (const restrictedKey of SENSITIVE_ROLE_GATED_COLLECTIONS) {
-      if (!canUserAccessCollection(restrictedKey)) {
-        if (dbStore.isSubscribed(restrictedKey)) {
-          dbStore.unregisterSubscription(restrictedKey);
+    if (tenantId !== "rba-demo") {
+      for (const restrictedKey of SENSITIVE_ROLE_GATED_COLLECTIONS) {
+        if (!canUserAccessCollection(restrictedKey)) {
+          if (dbStore.isSubscribed(restrictedKey)) {
+            dbStore.unregisterSubscription(restrictedKey);
+          }
+          dbStore.setSlice(restrictedKey, [] as unknown as DB[typeof restrictedKey]);
         }
-        dbStore.setSlice(restrictedKey, [] as unknown as DB[typeof restrictedKey]);
       }
-    }
-    if (canUserAccessCollection("staff") && !canUserViewStaffSalary()) {
-      const currentStaff = (dbStore.getSlice("staff") as Staff[]) || [];
-      if (currentStaff.some((s) => Boolean(s.salary))) {
-        dbStore.setSlice(
-          "staff",
-          currentStaff.map((s) => ({ ...s, salary: 0 })),
-        );
+      if (canUserAccessCollection("staff") && !canUserViewStaffSalary()) {
+        const currentStaff = (dbStore.getSlice("staff") as Staff[]) || [];
+        if (currentStaff.some((s) => Boolean(s.salary))) {
+          dbStore.setSlice(
+            "staff",
+            currentStaff.map((s) => ({ ...s, salary: 0 })),
+          );
+        }
       }
     }
     initGlobalErrorTelemetry();
@@ -3848,32 +3878,34 @@ export function DataProvider({ children }: { children: ReactNode }) {
     });
 
     // Enforce role-gating on sensitive collections whenever signed-in user role or permissions change
-    for (const restrictedKey of SENSITIVE_ROLE_GATED_COLLECTIONS) {
-      if (!isAuthenticated || !canUserAccessCollection(restrictedKey)) {
-        if (dbStore.isSubscribed(restrictedKey)) {
-          dbStore.unregisterSubscription(restrictedKey);
+    if (tenantId !== "rba-demo") {
+      for (const restrictedKey of SENSITIVE_ROLE_GATED_COLLECTIONS) {
+        if (!isAuthenticated || !canUserAccessCollection(restrictedKey)) {
+          if (dbStore.isSubscribed(restrictedKey)) {
+            dbStore.unregisterSubscription(restrictedKey);
+          }
+          const currentSlice = dbStore.getSlice(restrictedKey);
+          if (Array.isArray(currentSlice) && currentSlice.length > 0) {
+            dbStore.setSlice(restrictedKey, [] as unknown as DB[typeof restrictedKey]);
+          }
+        } else if (
+          isAuthenticated &&
+          auth?.currentUser &&
+          !auth.currentUser.isAnonymous &&
+          tenantId
+        ) {
+          ensureCollectionSubscribed(restrictedKey, tenantId);
         }
-        const currentSlice = dbStore.getSlice(restrictedKey);
-        if (Array.isArray(currentSlice) && currentSlice.length > 0) {
-          dbStore.setSlice(restrictedKey, [] as unknown as DB[typeof restrictedKey]);
-        }
-      } else if (
-        isAuthenticated &&
-        auth?.currentUser &&
-        !auth.currentUser.isAnonymous &&
-        tenantId
-      ) {
-        ensureCollectionSubscribed(restrictedKey, tenantId);
       }
-    }
 
-    if (canUserAccessCollection("staff") && !canUserViewStaffSalary()) {
-      const currentStaff = (dbStore.getSlice("staff") as Staff[]) || [];
-      if (currentStaff.some((s) => Boolean(s.salary))) {
-        dbStore.setSlice(
-          "staff",
-          currentStaff.map((s) => ({ ...s, salary: 0 })),
-        );
+      if (canUserAccessCollection("staff") && !canUserViewStaffSalary()) {
+        const currentStaff = (dbStore.getSlice("staff") as Staff[]) || [];
+        if (currentStaff.some((s) => Boolean(s.salary))) {
+          dbStore.setSlice(
+            "staff",
+            currentStaff.map((s) => ({ ...s, salary: 0 })),
+          );
+        }
       }
     }
   }, [tenantId, isAuthenticated, activeEmail, activeRole, passwordUser?.branch, activePerms]);
@@ -4624,13 +4656,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // Capture previous slice snapshot before optimistic update
       const previousSlice = (dbStore.getSlice(collectionName) as Array<{ id: string }>) || [];
       const prevItem = previousSlice.find((x) => x.id === id) as SessionItem | undefined;
-      const updated = previousSlice.map((x) => (x.id === id ? { ...x, ...partial } : x));
+      const mergedItem = prevItem ? { ...prevItem, ...partial, id } : { ...partial, id };
+      const updated = previousSlice.some((x) => x.id === id)
+        ? previousSlice.map((x) => (x.id === id ? { ...x, ...partial } : x))
+        : [mergedItem as unknown as DB[K][number], ...previousSlice];
       dbStore.setSlice(collectionName, updated as DB[K]);
 
       try {
         const hasAuth = await ensureAuthForWrite();
         if (!hasAuth && isE2EBypassEnabled()) return;
-        await atomicUpdateItem(tenantId, collectionName, id, partial as Record<string, unknown>);
+        const payloadToPersist =
+          collectionName === "workshops" && prevItem
+            ? (mergedItem as Record<string, unknown>)
+            : (partial as Record<string, unknown>);
+        await atomicUpdateItem(tenantId, collectionName, id, payloadToPersist);
         if (collectionName === "sessions") {
           const mergedSession = updated.find((x) => x.id === id) as unknown as
             SessionItem | undefined;
@@ -7926,6 +7965,17 @@ export function useTenantUser(): (UserAccount & { id: string }) | null {
   const resolvedTenantUser = useMemo(() => {
     const liveAcademy = dbStore.getSlice("academy");
     const customWhitelist = liveAcademy?.protectedSuperAdminEmails;
+
+    if (tenantId === "rba-demo" && passwordUser) {
+      return {
+        ...passwordUser,
+        id: passwordUser.id || "rba-demo-user",
+        role: normalizeUiRole(passwordUser.role),
+        branch: passwordUser.branch || "All",
+        branchScope: passwordUser.branchScope || "All branches",
+        active: true,
+      };
+    }
 
     if (passwordUser) {
       const pEmail = (passwordUser.email || "").toLowerCase();

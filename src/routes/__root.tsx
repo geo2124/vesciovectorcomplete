@@ -226,6 +226,7 @@ function RootShell({ children }: { children: ReactNode }) {
 import { AuthProvider } from "@/lib/auth";
 import { Toaster } from "@/components/ui/sonner";
 import { DevDiagnosticsPill } from "@/components/dev-diagnostics-pill";
+import { RbaDemoControlBar } from "@/components/rba-demo-control-bar";
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
@@ -258,6 +259,7 @@ function RootComponent() {
             <AppearanceSync />
             {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
             <Outlet />
+            <RbaDemoControlBar />
             <DevDiagnosticsPill />
             <Toaster />
           </DataProvider>

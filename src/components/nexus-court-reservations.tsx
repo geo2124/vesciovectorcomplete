@@ -3108,11 +3108,11 @@ export function NexusCourtReservationsModule({
           )}
 
           {/* Section 3: Rate Type & Booking Recurrence Mode */}
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid items-start gap-4 sm:grid-cols-2">
             {/* Rate Structure Box */}
-            <div className="rounded-lg border border-ink-800 bg-ink-950/60 p-3.5 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="font-display text-sm font-semibold text-ink-100">
+            <div className="flex flex-col rounded-lg border border-ink-800 bg-ink-950/60 p-4 pb-4 space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-display text-sm font-semibold leading-snug text-ink-100">
                   Rate Structure (Snapshot-Protected)
                 </span>
                 {editingReservation && bookingForm.useExistingSnapshot && (
@@ -3126,7 +3126,7 @@ export function NexusCourtReservationsModule({
                 )}
               </div>
 
-              <Field label="Rate Type">
+              <Field label="Rate Type" className="h-auto justify-start">
                 <Select
                   value={bookingForm.rateType}
                   onChange={(v) =>
@@ -3143,6 +3143,7 @@ export function NexusCourtReservationsModule({
               {bookingForm.rateType === "Private Rate" && (
                 <Field
                   label="Player Count"
+                  className="h-auto justify-start"
                   hint={`Base (1 player): ${money(pricingPreview.unitRate)} + ${money(pricingPreview.extraPlayerRate)} per extra player`}
                 >
                   <Input
@@ -3153,7 +3154,7 @@ export function NexusCourtReservationsModule({
                 </Field>
               )}
 
-              <div className="font-mono text-xs text-ink-300 tabular-nums">
+              <div className="rounded-md bg-ink-900/70 px-3 py-2 font-mono text-xs leading-snug text-ink-300 tabular-nums">
                 {bookingForm.rateType === "Private Rate" ? (
                   <span>
                     Formula: {money(pricingPreview.unitRate)} base +{" "}
@@ -3175,13 +3176,13 @@ export function NexusCourtReservationsModule({
             </div>
 
             {/* Booking Type: Walk-in (1-Time) vs Fixed / Recurring (Weeks or Continuous) */}
-            <div className="rounded-lg border border-ink-800 bg-ink-950/60 p-3.5 space-y-3">
-              <div className="font-display text-sm font-semibold text-ink-100">
+            <div className="flex flex-col rounded-lg border border-ink-800 bg-ink-950/60 p-4 pb-4 space-y-3">
+              <div className="font-display text-sm font-semibold leading-snug text-ink-100">
                 Booking Type &amp; Recurrence
               </div>
 
               {editingReservation ? (
-                <div className="text-xs text-ink-400">
+                <div className="text-xs leading-snug text-ink-400">
                   Editing single booking record on{" "}
                   <span className="font-mono text-ink-200">{bookingForm.date}</span>.
                 </div>
@@ -3297,19 +3298,41 @@ export function NexusCourtReservationsModule({
           </div>
 
           {/* Section 4: Pricing Overrides (Free Pass, Discount %, Fixed Discount) */}
-          <div className="rounded-lg border border-ink-800 bg-ink-950/70 p-4 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="font-display text-sm font-semibold text-ink-100">
-                Pricing Overrides &amp; Final Snapshot Fee
-              </span>
-              <span className="font-mono text-sm font-bold text-emerald-400 tabular-nums">
+          <div className="rounded-lg border border-ink-800 bg-ink-950/70 p-4 space-y-4">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="flex flex-col gap-1">
+                <span className="font-display text-sm font-semibold leading-snug text-ink-100">
+                  Pricing Overrides &amp; Final Snapshot Fee
+                </span>
+                <span className="font-mono text-xs leading-snug text-ink-400 tabular-nums">
+                  {bookingForm.rateType === "Private Rate" ? (
+                    <>
+                      Formula: {money(pricingPreview.unitRate)} base +{" "}
+                      {Math.max(0, pricingPreview.playerCount - 1)} extra ×{" "}
+                      {money(pricingPreview.extraPlayerRate)} ={" "}
+                      <strong className="text-ink-200">
+                        {money(pricingPreview.baseCalculatedAmount)}
+                      </strong>
+                    </>
+                  ) : (
+                    <>
+                      Formula: {money(pricingPreview.unitRate)}/hr × {pricingPreview.durationHours}h
+                      ={" "}
+                      <strong className="text-ink-200">
+                        {money(pricingPreview.baseCalculatedAmount)}
+                      </strong>
+                    </>
+                  )}
+                </span>
+              </div>
+              <span className="font-mono text-sm font-bold leading-snug text-emerald-400 tabular-nums">
                 Session Payable:{" "}
                 {bookingForm.freePass ? "$0.00 (Free Pass)" : money(pricingPreview.finalPayable)}
               </span>
             </div>
 
-            <div className="grid items-end gap-3 sm:grid-cols-3">
-              <div className="flex h-full min-w-0 flex-col justify-end">
+            <div className="grid items-start gap-3 sm:grid-cols-3">
+              <div className="flex min-w-0 flex-col">
                 <span className="label-mono mb-1.5 block text-[11px] leading-snug whitespace-nowrap">
                   Fee Waiver
                 </span>
@@ -3317,7 +3340,6 @@ export function NexusCourtReservationsModule({
                   type="button"
                   role="switch"
                   aria-checked={bookingForm.freePass}
-                  title="Overrides total payable fee to $0"
                   onClick={() =>
                     setBookingForm({ ...bookingForm, freePass: !bookingForm.freePass })
                   }
@@ -3342,9 +3364,16 @@ export function NexusCourtReservationsModule({
                     Free Pass ($0)
                   </span>
                 </button>
+                <span className="mt-1.5 block font-mono text-[10px] leading-snug text-ink-400">
+                  Overrides total payable fee to $0
+                </span>
               </div>
 
-              <Field label="Discount %" labelClassName="whitespace-nowrap">
+              <Field
+                label="Discount %"
+                labelClassName="whitespace-nowrap"
+                className="h-auto justify-start"
+              >
                 <Input
                   type="number"
                   disabled={bookingForm.freePass}
@@ -3355,7 +3384,11 @@ export function NexusCourtReservationsModule({
                 />
               </Field>
 
-              <Field label="Fixed Discount Amount" labelClassName="whitespace-nowrap">
+              <Field
+                label="Fixed Discount Amount"
+                labelClassName="whitespace-nowrap"
+                className="h-auto justify-start"
+              >
                 <Input
                   type="number"
                   disabled={bookingForm.freePass}

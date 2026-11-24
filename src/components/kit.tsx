@@ -452,9 +452,7 @@ export function Field({
   children: ReactNode;
 }) {
   return (
-    <label
-      className={cn("flex h-full min-w-0 flex-col justify-end [&>*:nth-child(2)]:mt-0", className)}
-    >
+    <label className={cn("flex min-w-0 flex-col justify-end [&>*:nth-child(2)]:mt-0", className)}>
       <span className={cn("label-mono block text-[11px] leading-snug mb-1.5", labelClassName)}>
         {label}
       </span>
