@@ -263,28 +263,62 @@ const DEFAULT_E2E_BYPASS_USER: UserAccount = {
 function resolveStoredOrDefaultE2EUser(): UserAccount {
   if (typeof window !== "undefined") {
     try {
+      const explicitRoleOverride = window.localStorage.getItem("e2e_test_role")?.trim();
+      const explicitBranchOverride = window.localStorage.getItem("e2e_test_branch")?.trim();
       const raw =
         window.localStorage.getItem("vv_auth_session_user") ||
         window.sessionStorage.getItem("vv_auth_session_user");
-      if (raw) {
-        const parsed = JSON.parse(raw) as Partial<UserAccount>;
-        if (parsed && (parsed.email || parsed.id)) {
-          const email = (parsed.email || DEFAULT_E2E_BYPASS_USER.email).trim();
-          const role = isSuperAdminRoleOrEmail(parsed.role, email)
-            ? "Super Admin"
-            : normalizeUiRole(parsed.role || "Super Admin");
-          const normalized: UserAccount = {
-            ...DEFAULT_E2E_BYPASS_USER,
-            ...parsed,
-            email,
-            role,
-            active: parsed.active !== false,
-            method: parsed.method || "Password",
-          };
-          window.localStorage.setItem("vv_auth_session_user", JSON.stringify(normalized));
-          window.sessionStorage.setItem("vv_auth_session_user", JSON.stringify(normalized));
-          return normalized;
+      if (raw || explicitRoleOverride) {
+        const parsed = raw ? (JSON.parse(raw) as Partial<UserAccount>) : {};
+        const requestedRoleRaw = explicitRoleOverride || parsed.role || "Super Admin";
+        const normalizedRequestedRole = normalizeUiRole(requestedRoleRaw);
+        const isRequestedSuperAdmin =
+          normalizedRequestedRole === "Super Admin" ||
+          requestedRoleRaw.toLowerCase() === "super_admin";
+
+        let email = (parsed.email || DEFAULT_E2E_BYPASS_USER.email).trim();
+        if (!isRequestedSuperAdmin && isProtectedSuperAdminEmail(email)) {
+          const slug = normalizedRequestedRole.toLowerCase().replace(/[^a-z0-9]+/g, ".");
+          email = `e2e.${slug}@vescio.test`;
         }
+
+        const role = isRequestedSuperAdmin
+          ? "Super Admin"
+          : isSuperAdminRoleOrEmail(normalizedRequestedRole, email)
+            ? "Super Admin"
+            : normalizedRequestedRole;
+
+        const branch =
+          explicitBranchOverride ||
+          parsed.branch ||
+          (role === "Branch Manager" || role === "Coach" || role === "Staff" ? "HQ" : "All");
+        const branchScope =
+          parsed.branchScope ||
+          (branch !== "All" && (role === "Branch Manager" || role === "Coach" || role === "Staff")
+            ? "Assigned branch only"
+            : "All branches");
+
+        const normalized: UserAccount = {
+          ...DEFAULT_E2E_BYPASS_USER,
+          ...parsed,
+          id:
+            parsed.id && (!isProtectedSuperAdminEmail(email) || isRequestedSuperAdmin)
+              ? parsed.id
+              : `e2e-${role.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+          authUid:
+            parsed.authUid && (!isProtectedSuperAdminEmail(email) || isRequestedSuperAdmin)
+              ? parsed.authUid
+              : `e2e-${role.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+          email,
+          role,
+          branch,
+          branchScope,
+          active: parsed.active !== false,
+          method: parsed.method || "Password",
+        };
+        window.localStorage.setItem("vv_auth_session_user", JSON.stringify(normalized));
+        window.sessionStorage.setItem("vv_auth_session_user", JSON.stringify(normalized));
+        return normalized;
       }
       window.localStorage.setItem("vv_auth_session_user", JSON.stringify(DEFAULT_E2E_BYPASS_USER));
       window.sessionStorage.setItem(
